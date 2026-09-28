@@ -13,6 +13,8 @@ const PORT = Number(process.env.PORT || 8787);
 const HOST = process.env.HOST || "127.0.0.1";
 const MAX_BODY_BYTES = 64 * 1024 * 1024;
 const MAX_IMAGE_DATA_URL_CHARS = 40 * 1024 * 1024 + 1024;
+const MAX_VIDEO_DATA_URL_CHARS = Math.ceil((20 * 1024 * 1024) / 3) * 4 + 128;
+const MAX_TOTAL_INLINE_DATA_URL_CHARS = 60 * 1024 * 1024;
 const MAX_REFERENCE_URL_CHARS = 32 * 1024;
 const MAX_IMAGE_REFERENCES = 9;
 const MAX_VIDEO_REFERENCES = 3;
@@ -125,6 +127,7 @@ function validateContent(content) {
   let hasText = false;
   let imageCount = 0;
   let videoCount = 0;
+  let inlineDataUrlChars = 0;
   for (const item of content) {
     if (!item || typeof item !== "object") throw new HttpError(400, "Invalid content item");
     if (item.type === "text") {
@@ -144,8 +147,15 @@ function validateContent(content) {
     if (item.type === "video_url") {
       videoCount += 1;
       if (videoCount > MAX_VIDEO_REFERENCES) throw new HttpError(400, `At most ${MAX_VIDEO_REFERENCES} reference videos are allowed`);
-      if (!/^https?:\/\//i.test(media.url)) throw new HttpError(400, "Reference videos require an HTTP(S) URL");
-      if (media.url.length > MAX_REFERENCE_URL_CHARS) throw new HttpError(413, "Reference video URL is too long");
+      const isDataUrl = /^data:/i.test(media.url);
+      if (isDataUrl && !/^data:video\/(?:mp4|quicktime|webm);base64,[A-Za-z0-9+/]*={0,2}$/i.test(media.url)) {
+        throw new HttpError(400, "Reference video data URL is invalid or unsupported");
+      }
+      if (!isDataUrl && !/^https?:\/\//i.test(media.url)) throw new HttpError(400, "Reference videos require an HTTP(S) URL or video data URL");
+      if (media.url.length > (isDataUrl ? MAX_VIDEO_DATA_URL_CHARS : MAX_REFERENCE_URL_CHARS)) {
+        throw new HttpError(413, isDataUrl ? "Reference video exceeds the 20 MiB limit" : "Reference video URL is too long");
+      }
+      if (isDataUrl) inlineDataUrlChars += media.url.length;
       continue;
     }
     imageCount += 1;
@@ -158,8 +168,10 @@ function validateContent(content) {
     if (media.url.length > (isDataUrl ? MAX_IMAGE_DATA_URL_CHARS : MAX_REFERENCE_URL_CHARS)) {
       throw new HttpError(413, isDataUrl ? "Reference image exceeds the 30 MiB limit" : "Reference image URL is too long");
     }
+    if (isDataUrl) inlineDataUrlChars += media.url.length;
   }
   if (!hasText) throw new HttpError(400, "A text prompt is required");
+  if (inlineDataUrlChars > MAX_TOTAL_INLINE_DATA_URL_CHARS) throw new HttpError(413, "Inline reference media exceeds the total request limit");
 }
 
 function buildUpstreamRequest(input) {

@@ -4,13 +4,13 @@
 
 - 四个目标模型名称校验；
 - 多条参考图片和参考视频；
-- HTTP(S) URL、`data:` URL、本地图片 Base64、本地视频自动上传；
+- HTTP(S) URL、`data:` URL、本地图片和视频自动 Base64；
 - 创建任务、轮询终态、视频 URL 提取；
 - 流式下载和可选 Base64 输出；
 - API Key 不写入日志或 Skill 文件。
 - Web 页面加载、生成接口代理、短期视频代理。
 - 模型元数据驱动的时长、比例、分辨率选项。
-- 本地图片自动转换为 Base64 `data:` URL；本地视频和视频 data URL 自动上传。
+- 本地图片和视频自动转换为 Base64 `data:` URL，并统一提交到 `/v1/videos`。
 - 图片最多 9 条、视频最多 3 条，混合输入保持顺序。
 
 ## 验收结果
@@ -34,8 +34,8 @@
 | GitHub Pages 参数快照工作流 | 通过：四模型快照与 Pages 发布成功 |
 | 线上动态参数显示 | 通过：Pages 切换标准版后显示部署快照、默认 `1080p` 和四档分辨率 |
 | 本地图片自动转换 | 通过：浏览器选择 PNG 后生成 `data:image/png;base64,...` 并显示缩略图 |
-| 本地视频 multipart 上传 | 通过：CLI 使用流式 multipart，模拟网关收到 `file` 和文件名 |
-| 视频 data URL 有界解码并上传 | 通过：3 字节 MP4 data URL 上传后以 HTTP(S) URL 创建任务 |
+| 本地视频自动 Base64 | 通过：CLI 将本地 MP4 转成 `data:video/mp4;base64,...` 并提交到 `/v1/videos` |
+| 视频 data URL 直接提交 | 通过：模拟网关收到 `content[].video_url.url`，没有 `/v1/videos/uploads` 请求 |
 | 图片/视频数量上限 | 通过：第 4 条视频在 CLI 和 Node 代理均被拒绝 |
 | Web 本地视频入口 | 通过：页面显示本地多选 `Video` 按钮，视频 data URL 显示 `READY` |
 | 图片 data URL 网关请求 | 通过：模拟网关收到 `reference_image` 并完成任务轮询 |

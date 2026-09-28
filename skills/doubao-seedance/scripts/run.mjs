@@ -1,9 +1,8 @@
 #!/usr/bin/env node
 
-import { createReadStream, createWriteStream } from "node:fs";
+import { createWriteStream } from "node:fs";
 import { mkdir, readFile, rename, rm, stat } from "node:fs/promises";
 import { spawn } from "node:child_process";
-import { randomBytes } from "node:crypto";
 import { once } from "node:events";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -16,7 +15,8 @@ const MODELS = new Set([
   "doubao-seedance-2-0-mini-260615",
 ]);
 const DEFAULT_MODEL = "doubao-seedance-2-0-260128";
-const DEFAULT_MAX_MEDIA_BYTES = 64 * 1024 * 1024;
+const DEFAULT_MAX_MEDIA_BYTES = 20 * 1024 * 1024;
+const DEFAULT_MAX_TOTAL_MEDIA_BYTES = 45 * 1024 * 1024;
 const DEFAULT_MAX_BASE64_BYTES = 128 * 1024 * 1024;
 const DEFAULT_POLL_INTERVAL_SECONDS = 15;
 const MIN_POLL_INTERVAL_SECONDS = 3;
@@ -63,7 +63,7 @@ Request:
 
 Media:
   --upload-command <path>     Optional custom uploader: <file> <mime> <image|video> -> URL
-  --max-media-bytes <bytes>   Local media/data-video limit, default 67108864
+  --max-media-bytes <bytes>   Local media/data-video limit, default 20971520
 
 Polling/output:
   --poll-interval <seconds>   Default 15, minimum 3
@@ -272,7 +272,7 @@ function assertSupportedModel(model) {
   }
 }
 
-async function buildRequest(args, connection) {
+async function buildRequest(args) {
   let request = {};
   if (args.requestJson) {
     try {
@@ -304,10 +304,17 @@ async function buildRequest(args, connection) {
   if (videoCount > MAX_VIDEO_REFERENCES) throw new Error(`At most ${MAX_VIDEO_REFERENCES} reference videos are allowed`);
 
   for (const { kind, source } of args.media) {
-    const url = await resolveMediaSource(source, kind, args, connection);
+    const url = await resolveMediaSource(source, kind, args);
     content.push(kind === "image"
       ? { type: "image_url", image_url: { url }, role: "reference_image" }
       : { type: "video_url", video_url: { url }, role: "reference_video" });
+  }
+  const inlineBytes = content.reduce((total, item) => {
+    const value = item?.image_url?.url || item?.video_url?.url;
+    return total + dataUrlDecodedBytes(value);
+  }, 0);
+  if (inlineBytes > DEFAULT_MAX_TOTAL_MEDIA_BYTES) {
+    throw new Error(`Inline reference media exceeds ${DEFAULT_MAX_TOTAL_MEDIA_BYTES} bytes in total`);
   }
 
   request = { ...request, model: args.model, content };
@@ -317,24 +324,23 @@ async function buildRequest(args, connection) {
   return request;
 }
 
-async function resolveMediaSource(source, kind, args, connection) {
+function dataUrlDecodedBytes(value) {
+  if (typeof value !== "string" || !/^data:/i.test(value)) return 0;
+  const comma = value.indexOf(",");
+  if (comma < 0 || !/;base64$/i.test(value.slice(0, comma))) return 0;
+  const payload = value.slice(comma + 1);
+  const padding = payload.endsWith("==") ? 2 : payload.endsWith("=") ? 1 : 0;
+  return Math.max(0, Math.floor(payload.length * 3 / 4) - padding);
+}
+
+async function resolveMediaSource(source, kind, args) {
   if (/^(?:https?:|asset:)/i.test(source)) {
     return source;
   }
   if (/^data:/i.test(source)) {
     if (kind === "image") return source;
     const media = videoDataUrl(source, args.maxMediaBytes);
-    log("upload.start", { source: "data-url", bytes: media.bytes.length });
-    const url = await uploadVideo({
-      ...connection,
-      fileName: `reference.${media.extension}`,
-      mime: media.mime,
-      size: media.bytes.length,
-      stream: () => Readable.from([media.bytes]),
-      timeoutMs: args.timeoutSeconds * 1000,
-    });
-    log("upload.done", { source: "data-url", url });
-    return url;
+    return media.value;
   }
 
   const filePath = resolve(process.cwd(), source);
@@ -365,17 +371,8 @@ async function resolveMediaSource(source, kind, args, connection) {
   }
 
   if (kind === "video") {
-    log("upload.start", { file: filePath, bytes: fileStat.size });
-    const url = await uploadVideo({
-      ...connection,
-      fileName: basename(filePath),
-      mime,
-      size: fileStat.size,
-      stream: () => createReadStream(filePath),
-      timeoutMs: args.timeoutSeconds * 1000,
-    });
-    log("upload.done", { file: filePath, url });
-    return url;
+    const bytes = await readFile(filePath);
+    return `data:${mime};base64,${bytes.toString("base64")}`;
   }
 
   const bytes = await readFile(filePath);
@@ -391,63 +388,11 @@ function videoDataUrl(value, maxBytes) {
     throw new Error(`Video data URL must be Base64 MP4, MOV, or WebM up to ${maxBytes} bytes`);
   }
   if (!/^[A-Za-z0-9+/]*={0,2}$/.test(payload)) throw new Error("Video data URL contains invalid Base64");
-  const bytes = Buffer.from(payload, "base64");
-  if (bytes.length > maxBytes) throw new Error(`Video data URL exceeds --max-media-bytes ${maxBytes}`);
+  const padding = payload.endsWith("==") ? 2 : payload.endsWith("=") ? 1 : 0;
+  const bytes = Math.floor(payload.length * 3 / 4) - padding;
+  if (bytes > maxBytes) throw new Error(`Video data URL exceeds --max-media-bytes ${maxBytes}`);
   const mime = match[1].toLowerCase();
-  return { bytes, mime, extension: mime === "video/quicktime" ? "mov" : mime.slice("video/".length) };
-}
-
-async function uploadVideo({ url, key, fileName, mime, size, stream, timeoutMs }) {
-  const boundary = `----doubao-seedance-${randomBytes(16).toString("hex")}`;
-  const safeFileName = basename(fileName).replace(/["\r\n]/g, "_");
-  const head = Buffer.from(
-    `--${boundary}\r\n` +
-    `Content-Disposition: form-data; name="file"; filename="${safeFileName}"\r\n` +
-    `Content-Type: ${mime}\r\n\r\n`,
-  );
-  const tail = Buffer.from(`\r\n--${boundary}--\r\n`);
-  const body = Readable.from((async function* multipartBody() {
-    yield head;
-    for await (const chunk of stream()) yield chunk;
-    yield tail;
-  })());
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const response = await fetch(`${url}/v1/videos/uploads`, {
-      method: "POST",
-      headers: {
-        Authorization: authHeader(key),
-        Accept: "application/json",
-        "Content-Type": `multipart/form-data; boundary=${boundary}`,
-        "Content-Length": String(head.length + size + tail.length),
-      },
-      body,
-      duplex: "half",
-      signal: controller.signal,
-    });
-    const raw = await response.text();
-    let payload = null;
-    try {
-      payload = raw ? JSON.parse(raw) : null;
-    } catch {
-      payload = { raw };
-    }
-    if (!response.ok || payload?.success === false) {
-      const error = typeof payload?.error === "string" ? payload.error : payload?.error?.message;
-      throw new Error(`HTTP ${response.status}: ${error || payload?.message || response.statusText}`);
-    }
-    const uploadedUrl = payload?.data?.url || payload?.url;
-    if (typeof uploadedUrl !== "string" || !/^https?:\/\//i.test(uploadedUrl)) {
-      throw new Error("Gateway upload did not return an HTTP(S) URL");
-    }
-    return uploadedUrl;
-  } catch (error) {
-    if (error.name === "AbortError") throw new Error("Video upload timed out");
-    throw error;
-  } finally {
-    clearTimeout(timeout);
-  }
+  return { bytes, mime, extension: mime === "video/quicktime" ? "mov" : mime.slice("video/".length), value: `data:${mime};base64,${payload}` };
 }
 
 function mimeForFile(filePath, kind) {
@@ -607,7 +552,7 @@ async function main() {
   if (args.preflight) {
     await requestJson(`${baseUrl}/v1/models`, { key });
   }
-  const request = await buildRequest(args, { url: baseUrl, key });
+  const request = await buildRequest(args);
   log("create.start", { url: `${baseUrl}/v1/videos`, model: args.model });
   const created = await requestJson(`${baseUrl}/v1/videos`, {
     method: "POST",

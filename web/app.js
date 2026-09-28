@@ -1,13 +1,12 @@
 const MAX_IMAGE_BYTES = 30 * 1024 * 1024;
 const MAX_TOTAL_IMAGE_BYTES = 45 * 1024 * 1024;
-const MAX_VIDEO_BYTES = 256 * 1024 * 1024;
-const MAX_VIDEO_DATA_URL_BYTES = 64 * 1024 * 1024;
-const MAX_TOTAL_VIDEO_DATA_URL_BYTES = 96 * 1024 * 1024;
+const MAX_VIDEO_DATA_URL_BYTES = 20 * 1024 * 1024;
+const MAX_TOTAL_VIDEO_DATA_URL_BYTES = 30 * 1024 * 1024;
+const MAX_TOTAL_INLINE_MEDIA_BYTES = 45 * 1024 * 1024;
 const MAX_BASE64_BYTES = 128 * 1024 * 1024;
 const MAX_IMAGE_REFERENCE_COUNT = 9;
 const MAX_VIDEO_REFERENCE_COUNT = 3;
 const POLL_INTERVAL_MS = 15 * 1000;
-const UPLOAD_TIMEOUT_MS = 10 * 60 * 1000;
 const SUPPORTED_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/bmp", "image/tiff", "image/gif"]);
 const SUPPORTED_VIDEO_TYPES = new Set(["video/mp4", "video/quicktime", "video/webm"]);
 const SUPPORTED_VIDEO_EXTENSIONS = new Set(["mp4", "mov", "webm"]);
@@ -284,12 +283,20 @@ function readFileAsDataUrl(file) {
   });
 }
 
+function inlineMediaBytes(references = state.references) {
+  return references.reduce((total, reference) => {
+    const inline = Boolean(reference.file) || /^data:/i.test(reference.value || "");
+    return total + (inline ? reference.fileSize || 0 : 0);
+  }, 0);
+}
+
 async function addImages(files) {
   const imageCount = state.references.filter((reference) => reference.kind === "image").length;
   if (imageCount + files.length > MAX_IMAGE_REFERENCE_COUNT) throw new Error(`At most ${MAX_IMAGE_REFERENCE_COUNT} reference images are allowed`);
   const existingBytes = state.references.reduce((total, reference) => total + (reference.kind === "image" ? reference.fileSize || 0 : 0), 0);
   const addedBytes = files.reduce((total, file) => total + file.size, 0);
   if (existingBytes + addedBytes > MAX_TOTAL_IMAGE_BYTES) throw new Error("Local images exceed the 45 MiB total limit");
+  if (inlineMediaBytes() + addedBytes > MAX_TOTAL_INLINE_MEDIA_BYTES) throw new Error("Local image and video inputs exceed the 45 MiB total limit");
   for (const file of files) {
     if (!SUPPORTED_IMAGE_TYPES.has(file.type)) throw new Error(`${file.name} is not a supported image`);
     if (file.size > MAX_IMAGE_BYTES) throw new Error(`${file.name} exceeds the 30 MiB limit`);
@@ -307,13 +314,17 @@ async function addImages(files) {
 function addVideos(files) {
   const videoCount = state.references.filter((reference) => reference.kind === "video").length;
   if (videoCount + files.length > MAX_VIDEO_REFERENCE_COUNT) throw new Error(`At most ${MAX_VIDEO_REFERENCE_COUNT} reference videos are allowed`);
+  const addedBytes = files.reduce((total, file) => total + file.size, 0);
+  const existingVideoBytes = state.references.reduce((total, reference) => total + (reference.kind === "video" && (reference.file || /^data:/i.test(reference.value || "")) ? reference.fileSize || 0 : 0), 0);
   for (const file of files) {
     const extension = file.name.split(".").pop()?.toLowerCase() || "";
     if (!SUPPORTED_VIDEO_EXTENSIONS.has(extension) || (file.type && !SUPPORTED_VIDEO_TYPES.has(file.type))) {
       throw new Error(`${file.name} must be an MP4, MOV, or WebM video`);
     }
-    if (file.size > MAX_VIDEO_BYTES) throw new Error(`${file.name} exceeds the 256 MiB limit`);
+    if (file.size > MAX_VIDEO_DATA_URL_BYTES) throw new Error(`${file.name} exceeds the 20 MiB inline video limit`);
   }
+  if (existingVideoBytes + addedBytes > MAX_TOTAL_VIDEO_DATA_URL_BYTES) throw new Error("Local videos exceed the 30 MiB total limit");
+  if (inlineMediaBytes() + addedBytes > MAX_TOTAL_INLINE_MEDIA_BYTES) throw new Error("Local image and video inputs exceed the 45 MiB total limit");
   state.references.push(...files.map((file) => ({
     kind: "video",
     label: file.name,
@@ -322,7 +333,7 @@ function addVideos(files) {
     uploadStatus: "ready",
   })));
   renderReferences();
-  showToast(files.length === 1 ? "Video ready to upload" : `${files.length} videos ready to upload`);
+  showToast(files.length === 1 ? "Video ready" : `${files.length} videos ready`);
 }
 
 function parseVideoDataUrl(value) {
@@ -331,12 +342,12 @@ function parseVideoDataUrl(value) {
   const payload = comma >= 0 ? value.slice(comma + 1) : "";
   const match = /^data:(video\/(?:mp4|quicktime|webm));base64$/i.exec(header);
   if (!match || !payload || payload.length % 4 === 1 || payload.length > Math.ceil(MAX_VIDEO_DATA_URL_BYTES / 3) * 4 + 4) {
-    throw new Error("Reference video data URL must be Base64 MP4, MOV, or WebM up to 64 MiB");
+    throw new Error("Reference video data URL must be Base64 MP4, MOV, or WebM up to 20 MiB");
   }
   if (!/^[A-Za-z0-9+/]*={0,2}$/.test(payload)) throw new Error("Reference video data URL contains invalid Base64");
   const padding = payload.endsWith("==") ? 2 : payload.endsWith("=") ? 1 : 0;
   const bytes = Math.floor(payload.length * 3 / 4) - padding;
-  if (bytes > MAX_VIDEO_DATA_URL_BYTES) throw new Error("Reference video data URL exceeds the 64 MiB limit");
+  if (bytes > MAX_VIDEO_DATA_URL_BYTES) throw new Error("Reference video data URL exceeds the 20 MiB limit");
   const mime = match[1].toLowerCase();
   const extension = mime === "video/quicktime" ? "mov" : mime.slice("video/".length);
   return { bytes, extension };
@@ -355,7 +366,8 @@ function addUrl() {
   if (kind === "video" && /^data:/i.test(value)) {
     const { bytes, extension } = parseVideoDataUrl(value);
     const existingBytes = state.references.reduce((total, reference) => total + (reference.videoDataBytes || 0), 0);
-    if (existingBytes + bytes > MAX_TOTAL_VIDEO_DATA_URL_BYTES) throw new Error("Video data URLs exceed the 96 MiB total limit");
+    if (existingBytes + bytes > MAX_TOTAL_VIDEO_DATA_URL_BYTES) throw new Error("Video data URLs exceed the 30 MiB total limit");
+    if (inlineMediaBytes() + bytes > MAX_TOTAL_INLINE_MEDIA_BYTES) throw new Error("Local image and video inputs exceed the 45 MiB total limit");
     state.references.push({ kind, label: `video-data.${extension}`, value, fileSize: bytes, videoDataBytes: bytes, uploadStatus: "ready" });
   } else {
     state.references.push({ kind, label: value, value, preview: kind === "image" && /^data:image\//i.test(value) ? value : null });
@@ -388,7 +400,7 @@ function renderReferences() {
     info.className = "media-info";
     const kind = document.createElement("span");
     kind.className = "media-kind";
-    kind.textContent = reference.kind === "video" && (reference.file || reference.uploadedUrl || /^data:/i.test(reference.value || ""))
+    kind.textContent = reference.kind === "video" && (reference.file || /^data:/i.test(reference.value || ""))
       ? `video · ${reference.uploadStatus || "ready"}`
       : reference.kind;
     const name = document.createElement("span");
@@ -473,53 +485,21 @@ async function generateDirect(baseUrl, key, body) {
   return { task_id: taskId, status, video_url: absoluteVideoUrl, proxy_url: absoluteVideoUrl, direct: true, base_url: baseUrl, api_key: key };
 }
 
-async function uploadReferenceVideo(baseUrl, key, reference, index, total) {
-  if (reference.uploadedUrl && reference.uploadBaseUrl === baseUrl) return reference.uploadedUrl;
-  reference.uploadStatus = "uploading";
+async function encodeReferenceVideo(reference, index, total) {
+  if (!reference.file) {
+    parseVideoDataUrl(reference.value);
+    return reference.value;
+  }
+  reference.uploadStatus = "encoding";
   renderReferences();
-  setBusy(true, `Uploading ${index}/${total}...`);
-  setRequestStatus(`Uploading reference video ${index}/${total}: ${reference.label}`);
+  setBusy(true, `Encoding ${index}/${total}...`);
+  setRequestStatus(`Encoding reference video ${index}/${total}: ${reference.label}`);
   try {
-    const fromDataUrl = !reference.file;
-    let media = reference.file;
-    let fileName = reference.file?.name;
-    if (!media) {
-      const { extension } = parseVideoDataUrl(reference.value);
-      const response = await fetch(reference.value);
-      const blob = await response.blob();
-      if (blob.size > MAX_VIDEO_DATA_URL_BYTES) throw new Error(`${reference.label} exceeds the 64 MiB data URL limit`);
-      media = blob;
-      fileName = `reference.${extension}`;
-    }
-    const form = new FormData();
-    form.append("file", media, fileName);
-    const controller = new AbortController();
-    const timeout = window.setTimeout(() => controller.abort(), UPLOAD_TIMEOUT_MS);
-    let payload;
-    try {
-      payload = await responseJson(await fetch(`${baseUrl}/v1/videos/uploads`, {
-        method: "POST",
-        headers: { Accept: "application/json", ...authHeaders(key) },
-        body: form,
-        signal: controller.signal,
-      }));
-    } catch (error) {
-      if (error.name === "AbortError") throw new Error(`Reference video upload timed out after ${UPLOAD_TIMEOUT_MS / 60000} minutes`);
-      throw error;
-    } finally {
-      window.clearTimeout(timeout);
-    }
-    const url = payload?.data?.url || payload?.url;
-    if (typeof url !== "string" || !/^https?:\/\//i.test(url)) throw new Error("Gateway upload did not return an HTTP(S) URL");
-    reference.uploadedUrl = url;
-    reference.uploadBaseUrl = baseUrl;
-    if (fromDataUrl) {
-      reference.value = null;
-      reference.videoDataBytes = 0;
-    }
-    reference.uploadStatus = "uploaded";
+    const dataUrl = await readFileAsDataUrl(reference.file);
+    parseVideoDataUrl(dataUrl);
+    reference.uploadStatus = "encoded";
     renderReferences();
-    return url;
+    return dataUrl;
   } catch (error) {
     reference.uploadStatus = "failed";
     renderReferences();
@@ -552,24 +532,18 @@ async function submitGeneration(event) {
   setBusy(true);
   try {
     const references = [...state.references];
-    const pendingUploads = references.filter((reference) => reference.kind === "video" &&
-      (reference.file || /^data:/i.test(reference.value || "")) &&
-      (!reference.uploadedUrl || reference.uploadBaseUrl !== baseUrl));
-    let uploadIndex = 0;
+    const inlineVideos = references.filter((reference) => reference.kind === "video" && (reference.file || /^data:/i.test(reference.value || "")));
+    let encodeIndex = 0;
     const content = [{ type: "text", text: prompt }];
     for (const reference of references) {
       if (reference.kind === "image") {
         content.push({ type: "image_url", image_url: { url: reference.value }, role: "reference_image" });
         continue;
       }
-      const requiresUpload = reference.file || /^data:/i.test(reference.value || "");
-      const canReuseUpload = reference.uploadedUrl && reference.uploadBaseUrl === baseUrl;
-      if (reference.uploadedUrl && !canReuseUpload && !requiresUpload) {
-        throw new Error(`${reference.label} was uploaded through another gateway; remove it and add the video data URL again`);
-      }
-      const videoUrl = canReuseUpload ? reference.uploadedUrl : (requiresUpload
-        ? await uploadReferenceVideo(baseUrl, apiKey, reference, ++uploadIndex, pendingUploads.length)
-        : reference.value);
+      const requiresEncoding = reference.file || /^data:/i.test(reference.value || "");
+      const videoUrl = requiresEncoding
+        ? await encodeReferenceVideo(reference, ++encodeIndex, inlineVideos.length)
+        : reference.value;
       content.push({ type: "video_url", video_url: { url: videoUrl }, role: "reference_video" });
     }
     const body = {
@@ -582,8 +556,9 @@ async function submitGeneration(event) {
       watermark: requestOptions.watermark,
     };
     setBusy(true);
-    setRequestStatus(state.proxyAvailable ? "Submitting render through local proxy..." : "Submitting render and waiting for completion...");
-    const result = state.proxyAvailable
+    const hasInlineVideo = content.some((item) => item.type === "video_url" && /^data:/i.test(item.video_url?.url || ""));
+    setRequestStatus("Submitting POST /v1/videos and waiting for completion...");
+    const result = state.proxyAvailable && !hasInlineVideo
       ? await responseJson(await fetch("/api/generate", { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json" }, body: JSON.stringify({ base_url: baseUrl, api_key: apiKey, ...body }) }))
       : await generateDirect(baseUrl, apiKey, body);
     setResult(result);
@@ -591,16 +566,13 @@ async function submitGeneration(event) {
     showToast("Video is ready");
   } catch (error) {
     state.requestFailed = true;
-    for (const reference of state.references) {
-      if (reference.kind === "video" && reference.file && reference.uploadedUrl) {
-        reference.uploadedUrl = null;
-        reference.uploadBaseUrl = null;
-        reference.uploadStatus = "ready";
-      }
-    }
     renderReferences();
     setRequestStatus(error.message, "error");
   } finally {
+    for (const reference of state.references) {
+      if (reference.kind === "video" && reference.file) reference.uploadStatus = "ready";
+    }
+    renderReferences();
     setBusy(false);
   }
 }

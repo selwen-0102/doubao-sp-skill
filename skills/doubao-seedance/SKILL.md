@@ -48,11 +48,11 @@ node skills/doubao-seedance/scripts/run.mjs \
 
 - `http(s)://` URL：原样提交；
 - 图片 `data:<mime>;base64,...`：原样提交；
-- 视频 `data:video/...;base64,...`：有界解码后自动上传到 `POST /v1/videos/uploads`，再提交返回的 HTTP(S) URL；
+- 视频 `data:video/...;base64,...`：校验大小和格式后直接作为 `video_url.url` 提交；
 - 本地图片：读取后转成 `data:` URL；
-- 本地 MP4、MOV、WebM 视频：通过流式 multipart 自动上传到 `POST /v1/videos/uploads`，不会整体读入内存。
+- 本地 MP4、MOV、WebM 视频：读取后转成 `data:video/...;base64,...`，随 `POST /v1/videos` 一次提交。
 
-本地文件和视频 data URL 默认限制为 64 MiB，可用 `--max-media-bytes` 调整。视频上传接口使用同一网关 URL 和 Key，终端用户不需要配置额外的对象存储；网关管理员必须已配置 `PurposeStaging` 的公网可读存储和生命周期，否则上传接口会返回 `503`。
+本地文件和视频 data URL 默认限制为 20 MiB，可用 `--max-media-bytes` 调整；全部内联参考媒体合计限制为 45 MiB，避免 Base64 请求造成过高内存占用。网关必须允许 `video_url.url` 使用 `data:video/...;base64,...`。
 
 如需覆盖网关内置上传，可通过 `--upload-command` 注入自定义上传器。上传器按以下约定接收参数，并且只向标准输出打印最终 `http(s)` URL：
 
@@ -60,7 +60,7 @@ node skills/doubao-seedance/scripts/run.mjs \
 uploader <local-file> <mime-type> <image|video>
 ```
 
-未配置自定义上传器时，本地视频和视频 data URL 默认使用网关上传接口。
+未配置自定义上传器时，本地视频直接转为 data URL；配置自定义上传器后，本地文件将改用上传器返回的 HTTP(S) URL。
 
 ## 输出选项
 
