@@ -11,8 +11,9 @@ const ROOT = dirname(fileURLToPath(import.meta.url));
 const WEB_ROOT = join(ROOT, "web");
 const PORT = Number(process.env.PORT || 8787);
 const HOST = process.env.HOST || "127.0.0.1";
-const MAX_BODY_BYTES = 128 * 1024 * 1024;
-const MAX_MEDIA_BYTES = 64 * 1024 * 1024;
+const MAX_BODY_BYTES = 64 * 1024 * 1024;
+const MAX_IMAGE_DATA_URL_CHARS = 40 * 1024 * 1024 + 1024;
+const MAX_REFERENCE_URL_CHARS = 32 * 1024;
 const MAX_REFERENCE_COUNT = 8;
 const TASK_TIMEOUT_MS = 10 * 60 * 1000;
 const POLL_INTERVAL_MS = 15 * 1000;
@@ -140,8 +141,18 @@ function validateContent(content) {
     if (!media || typeof media.url !== "string" || !media.url.trim()) {
       throw new HttpError(400, "Reference media URL is required");
     }
-    if (media.url.length > MAX_MEDIA_BYTES * 2) {
-      throw new HttpError(413, "A reference media item is too large");
+    if (item.type === "video_url") {
+      if (!/^https?:\/\//i.test(media.url)) throw new HttpError(400, "Reference videos require an HTTP(S) URL");
+      if (media.url.length > MAX_REFERENCE_URL_CHARS) throw new HttpError(413, "Reference video URL is too long");
+      continue;
+    }
+    const isDataUrl = /^data:/i.test(media.url);
+    if (isDataUrl && !/^data:image\/(?:jpeg|png|webp|bmp|tiff|gif);base64,/i.test(media.url)) {
+      throw new HttpError(400, "Reference image data URL is invalid or unsupported");
+    }
+    if (!isDataUrl && !/^https?:\/\//i.test(media.url)) throw new HttpError(400, "Reference images require an HTTP(S) URL or image data URL");
+    if (media.url.length > (isDataUrl ? MAX_IMAGE_DATA_URL_CHARS : MAX_REFERENCE_URL_CHARS)) {
+      throw new HttpError(413, isDataUrl ? "Reference image exceeds the 30 MiB limit" : "Reference image URL is too long");
     }
   }
   if (!hasText) throw new HttpError(400, "A text prompt is required");

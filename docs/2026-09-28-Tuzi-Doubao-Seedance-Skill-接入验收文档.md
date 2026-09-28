@@ -16,6 +16,8 @@
 6. 公网 URL 上传不绑定具体 OSS，使用 `--upload-command` 注入可替换上传器。
 7. Web 表单不再固定时长、比例和尺寸：本地 Node 模式通过 `/api/model-metadata` 代理读取 Tuzi API 站模型数据，GitHub Pages 使用部署时生成的 `model-metadata.json` 同源快照；缺失字段才使用最小兜底。
 8. Web 请求单独发送 `duration`、`ratio`、`resolution`，不把 `size` 当作分辨率控制。当前网关适配器明确转发 `resolution` 的是标准版 `doubao-seedance-2-0-260128`，其他模型的尺寸选项用于展示/计费参考，实际能力以渠道为准。
+9. Web 本地图片由浏览器自动读取并转换成 Base64 `data:` URL，用户只需选择文件；支持 JPEG、PNG、WebP、BMP、TIFF、GIF，单图 30 MiB、全部本地图 45 MiB。
+10. 当前网关不接受参考视频 `data:` URL，Web 端改为只接受视频 HTTP(S) URL，并在浏览器和 Node 服务两侧提前校验。
 
 ## 复现路径
 
@@ -58,8 +60,8 @@ npm start
 
 ## 已知边界
 
-- 当前网关或豆包上游可能要求参考视频为公网 HTTP(S) URL；未配置上传器时，本地视频会按用户要求转为 `data:` URL，但是否被上游接受取决于渠道能力。
-- 单个本地媒体默认限制为 64 MiB；`--base64` 结果默认限制为 128 MiB，避免无界内存占用。
+- Web 端参考视频必须为可访问的 HTTP(S) URL；CLI 若要处理本地视频，应通过 `--upload-command` 先上传，不直接提交视频 `data:` URL。
+- CLI 单个本地媒体默认限制为 64 MiB；`--base64` 结果默认限制为 128 MiB，避免无界内存占用。
 - 任务轮询间隔不能低于 3 秒。
 - 公网部署必须自行增加 HTTPS、用户认证、限流和日志脱敏；本项目的页面 Key 输入不写入 localStorage。
 - API 站模型参数随服务端配置变化，Pages 快照在下一次部署时更新；本地 Node 模式每次切换模型实时查询。

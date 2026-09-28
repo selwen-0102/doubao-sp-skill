@@ -1,7 +1,9 @@
-const MAX_FILE_BYTES = 64 * 1024 * 1024;
+const MAX_IMAGE_BYTES = 30 * 1024 * 1024;
+const MAX_TOTAL_IMAGE_BYTES = 45 * 1024 * 1024;
 const MAX_BASE64_BYTES = 128 * 1024 * 1024;
 const MAX_REFERENCE_COUNT = 8;
 const POLL_INTERVAL_MS = 15 * 1000;
+const SUPPORTED_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/bmp", "image/tiff", "image/gif"]);
 
 const MODEL_NAMES = [
   "doubao-seedance-2-5-260628",
@@ -30,7 +32,6 @@ const elements = {
   prompt: $("#prompt"),
   promptCount: $("#promptCount"),
   imageFile: $("#imageFile"),
-  videoFile: $("#videoFile"),
   mediaList: $("#mediaList"),
   urlKind: $("#urlKind"),
   urlInput: $("#urlInput"),
@@ -266,14 +267,23 @@ function readFileAsDataUrl(file) {
   });
 }
 
-async function addFiles(kind, files) {
+async function addImages(files) {
   if (state.references.length + files.length > MAX_REFERENCE_COUNT) throw new Error(`At most ${MAX_REFERENCE_COUNT} reference files are allowed`);
+  const existingBytes = state.references.reduce((total, reference) => total + (reference.fileSize || 0), 0);
+  const addedBytes = files.reduce((total, file) => total + file.size, 0);
+  if (existingBytes + addedBytes > MAX_TOTAL_IMAGE_BYTES) throw new Error("Local images exceed the 45 MiB total limit");
   for (const file of files) {
-    if (file.size > MAX_FILE_BYTES) throw new Error(`${file.name} exceeds the 64 MiB limit`);
-    const dataUrl = await readFileAsDataUrl(file);
-    state.references.push({ kind, label: file.name, value: dataUrl, preview: kind === "image" ? dataUrl : null });
+    if (!SUPPORTED_IMAGE_TYPES.has(file.type)) throw new Error(`${file.name} is not a supported image`);
+    if (file.size > MAX_IMAGE_BYTES) throw new Error(`${file.name} exceeds the 30 MiB limit`);
   }
+  const references = [];
+  for (const file of files) {
+    const dataUrl = await readFileAsDataUrl(file);
+    references.push({ kind: "image", label: file.name, value: dataUrl, preview: dataUrl, fileSize: file.size });
+  }
+  state.references.push(...references);
   renderReferences();
+  showToast(files.length === 1 ? "Image ready" : `${files.length} images ready`);
 }
 
 function addUrl() {
@@ -281,6 +291,10 @@ function addUrl() {
   const value = elements.urlInput.value.trim();
   if (!/^(?:https?:|data:)/i.test(value)) throw new Error("Reference URL must start with http(s): or data:");
   const kind = elements.urlKind.value;
+  if (kind === "video" && /^data:/i.test(value)) throw new Error("Reference videos require an HTTP(S) URL");
+  if (kind === "image" && /^data:/i.test(value) && !/^data:image\/(?:jpeg|png|webp|bmp|tiff|gif);base64,/i.test(value)) {
+    throw new Error("Reference image data URL is invalid or unsupported");
+  }
   state.references.push({ kind, label: value, value, preview: kind === "image" && /^data:image\//i.test(value) ? value : null });
   elements.urlInput.value = "";
   renderReferences();
@@ -471,9 +485,11 @@ async function copyBase64() {
 elements.form.addEventListener("submit", submitGeneration);
 elements.prompt.addEventListener("input", updatePromptCount);
 $("#addImage").addEventListener("click", () => elements.imageFile.click());
-$("#addVideo").addEventListener("click", () => elements.videoFile.click());
-elements.imageFile.addEventListener("change", async (event) => { try { await addFiles("image", [...event.target.files]); } catch (error) { showToast(error.message); } event.target.value = ""; });
-elements.videoFile.addEventListener("change", async (event) => { try { await addFiles("video", [...event.target.files]); } catch (error) { showToast(error.message); } event.target.value = ""; });
+$("#addVideoUrl").addEventListener("click", () => {
+  elements.urlKind.value = "video";
+  elements.urlInput.focus();
+});
+elements.imageFile.addEventListener("change", async (event) => { try { await addImages([...event.target.files]); } catch (error) { showToast(error.message); } event.target.value = ""; });
 $("#addUrl").addEventListener("click", () => { try { addUrl(); } catch (error) { showToast(error.message); } });
 elements.urlInput.addEventListener("keydown", (event) => { if (event.key === "Enter") { event.preventDefault(); try { addUrl(); } catch (error) { showToast(error.message); } } });
 elements.mediaList.addEventListener("click", (event) => { const button = event.target.closest(".remove-media"); if (!button) return; state.references.splice(Number(button.dataset.index), 1); renderReferences(); });
