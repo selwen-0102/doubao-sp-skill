@@ -1,6 +1,34 @@
 # Doubao Seedance Skill
 
-这是一个可分发的 Codex Skill，通过 Tuzi API 网关调用豆包 Seedance 视频模型。
+这是一个可分发的 Codex Skill，并附带独立可视化网页应用，通过 Tuzi API 网关调用豆包 Seedance 视频模型。
+
+## 可视化应用
+
+需要 Node.js 18 或更高版本，不需要额外安装 npm 依赖：
+
+```bash
+npm start
+```
+
+浏览器打开 <http://localhost:8787>，在页面填写 Tuzi API 网关 URL、API Key，选择模型并输入提示词。页面支持：
+
+- 多条本地或 URL 参考图片、参考视频；
+- 本地文件转 `data:` URL；
+- 模型切换后，从 Tuzi API 站同步该模型的时长、比例和分辨率/尺寸选项；
+- 任务状态等待、视频预览和下载；
+- 视频 URL 复制和 Base64 复制。
+
+本地 Node 版通过同源代理读取模型参数并调用网关；GitHub Pages 版直接从浏览器调用你填写的网关，模型参数使用部署时从 Tuzi API 站生成的同源快照。若 API 站暂时没有对应参数，页面会显示最小兜底配置。分辨率字段是否实际转发仍以网关渠道能力为准，目前标准版 `doubao-seedance-2-0-260128` 明确支持 `resolution`。
+
+API Key 只在当前浏览器请求和服务端内存中的短期视频代理中使用，不会写入仓库或浏览器本地存储。部署公网服务时请使用 HTTPS，并在反向代理层增加登录、访问控制和限流。
+
+服务端可通过 `PORT` 修改端口：
+
+```bash
+PORT=8787 npm start
+```
+
+本地服务默认只监听 `127.0.0.1`；自托管到公网时请显式配置反向代理、认证、限流和 HTTPS，不要把无认证的 `/api/generate` 直接暴露到公网。
 
 ## 安装
 

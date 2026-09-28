@@ -1,0 +1,13 @@
+{
+  "name": "doubao-sp-skill",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Doubao Seedance Codex Skill and standalone web app",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node server.mjs"
+  }
+}

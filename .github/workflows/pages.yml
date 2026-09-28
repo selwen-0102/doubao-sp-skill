@@ -1,0 +1,52 @@
+name: 部署可视化页面
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+      - name: 配置 Pages
+        uses: actions/configure-pages@v5
+      - name: 同步 API 站模型参数快照
+        run: |
+          set -eu
+          models=(
+            doubao-seedance-2-5-260628
+            doubao-seedance-2-0-260128
+            doubao-seedance-2-0-fast-260128
+            doubao-seedance-2-0-mini-260615
+          )
+          printf '{"models":{' > web/model-metadata.json
+          for index in "${!models[@]}"; do
+            model="${models[$index]}"
+            [ "$index" -eq 0 ] || printf ',' >> web/model-metadata.json
+            printf '%s:' "$(jq -Rn --arg value "$model" '$value')" >> web/model-metadata.json
+            curl --fail --silent --show-error --retry 3 "https://api.tu-zi.com/api/pricing/models?models=$model" \
+              | jq '.data[0] // {}' >> web/model-metadata.json
+          done
+          printf '}}' >> web/model-metadata.json
+      - name: 上传页面
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: web
+      - name: 发布页面
+        id: deployment
+        uses: actions/deploy-pages@v4
