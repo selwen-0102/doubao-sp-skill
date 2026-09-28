@@ -1,0 +1,7 @@
+interface:
+  display_name: "Doubao Seedance"
+  short_description: "调用豆包 Seedance 视频生成并处理参考媒体素材"
+  default_prompt: "使用 $doubao-seedance 生成一段豆包 Seedance 视频，并按需加入参考图片或视频。"
+
+policy:
+  allow_implicit_invocation: true
