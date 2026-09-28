@@ -4,6 +4,8 @@
 
 ## 可视化应用
 
+在线使用：<https://selwen-0102.github.io/doubao-sp-skill/>
+
 需要 Node.js 18 或更高版本，不需要额外安装 npm 依赖：
 
 ```bash
