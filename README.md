@@ -14,8 +14,9 @@ npm start
 
 浏览器打开 <http://localhost:8787>，在页面填写 Tuzi API 网关 URL、API Key，选择模型并输入提示词。页面支持：
 
-- 多条本地参考图片，以及图片/视频 URL；
+- 多条本地参考图片和视频，以及图片/视频 URL、data URL；
 - 选择本地图片后自动转成 Base64 `data:` URL，用户无需手动转换；
+- 选择本地 MP4、MOV、WebM 视频后，在生成时自动上传到网关，用户无需手动转换或准备公网 URL；
 - 模型切换后，从 Tuzi API 站同步该模型的时长、比例和分辨率/尺寸选项；
 - 任务状态等待、视频预览和下载；
 - 视频 URL 复制和 Base64 复制。
@@ -24,7 +25,9 @@ npm start
 
 API Key 只在当前浏览器请求和服务端内存中的短期视频代理中使用，不会写入仓库或浏览器本地存储。部署公网服务时请使用 HTTPS，并在反向代理层增加登录、访问控制和限流。
 
-当前 Tuzi Seedance 网关只接受图片 `data:` URL；参考视频需要填写可访问的 HTTP(S) URL。页面会在提交前阻止视频 `data:` URL，避免请求到上游后才报错。
+参考图片最多 9 条，参考视频最多 3 条。图片 data URL 原样提交；本地视频和视频 data URL 会先上传到网关的 `POST /v1/videos/uploads`，再把返回的 HTTP(S) URL 作为参考视频提交。网页单个本地视频限制 256 MiB；视频 data URL 解码后单条限制 64 MiB、合计限制 96 MiB。
+
+终端用户只需填写网关 URL 和 Key，不需要自行配置 OSS。网关管理员必须预先配置 `PurposeStaging` 的公网可读存储和生命周期；未配置时，`POST /v1/videos/uploads` 会返回 `503`。
 
 服务端可通过 `PORT` 修改端口：
 
@@ -69,6 +72,6 @@ node skills/doubao-seedance/scripts/run.mjs \
   --download
 ```
 
-脚本默认轮询任务并输出 JSON，其中包含 `task_id`、`status` 和 `video_url`。`--image`、`--video` 可以重复使用；输入支持 HTTP(S) URL、`data:` URL 和本地文件。本地文件默认转为 Base64 `data:` URL。若上游要求视频公网 URL，可通过 `--upload-command` 接入上传器。
+脚本默认轮询任务并输出 JSON，其中包含 `task_id`、`status` 和 `video_url`。`--image`、`--video` 可以重复使用；输入支持 HTTP(S) URL、`data:` URL 和本地文件。本地图片默认转为 Base64 `data:` URL；本地视频和视频 data URL 默认自动上传到网关，也可通过 `--upload-command` 覆盖本地文件上传方式。
 
 更多参数见 [Skill 使用说明](skills/doubao-seedance/SKILL.md)。

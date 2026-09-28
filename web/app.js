@@ -1,9 +1,16 @@
 const MAX_IMAGE_BYTES = 30 * 1024 * 1024;
 const MAX_TOTAL_IMAGE_BYTES = 45 * 1024 * 1024;
+const MAX_VIDEO_BYTES = 256 * 1024 * 1024;
+const MAX_VIDEO_DATA_URL_BYTES = 64 * 1024 * 1024;
+const MAX_TOTAL_VIDEO_DATA_URL_BYTES = 96 * 1024 * 1024;
 const MAX_BASE64_BYTES = 128 * 1024 * 1024;
-const MAX_REFERENCE_COUNT = 8;
+const MAX_IMAGE_REFERENCE_COUNT = 9;
+const MAX_VIDEO_REFERENCE_COUNT = 3;
 const POLL_INTERVAL_MS = 15 * 1000;
+const UPLOAD_TIMEOUT_MS = 10 * 60 * 1000;
 const SUPPORTED_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/bmp", "image/tiff", "image/gif"]);
+const SUPPORTED_VIDEO_TYPES = new Set(["video/mp4", "video/quicktime", "video/webm"]);
+const SUPPORTED_VIDEO_EXTENSIONS = new Set(["mp4", "mov", "webm"]);
 
 const MODEL_NAMES = [
   "doubao-seedance-2-5-260628",
@@ -15,6 +22,7 @@ const MODEL_NAMES = [
 const state = {
   references: [],
   busy: false,
+  requestFailed: false,
   result: null,
   metadata: null,
   metadataRequest: 0,
@@ -31,7 +39,11 @@ const elements = {
   modelMetaStatus: $("#modelMetaStatus"),
   prompt: $("#prompt"),
   promptCount: $("#promptCount"),
+  addImage: $("#addImage"),
+  addVideo: $("#addVideo"),
+  addUrl: $("#addUrl"),
   imageFile: $("#imageFile"),
+  videoFile: $("#videoFile"),
   mediaList: $("#mediaList"),
   urlKind: $("#urlKind"),
   urlInput: $("#urlInput"),
@@ -76,12 +88,17 @@ function setRequestStatus(message, kind = "") {
   elements.requestStatus.className = `request-status ${kind}`.trim();
 }
 
-function setBusy(busy) {
+function setBusy(busy, label = "Rendering...") {
   state.busy = busy;
   elements.generateButton.disabled = busy;
-  elements.generateLabel.textContent = busy ? "Rendering..." : "Generate video";
-  elements.resultBadge.textContent = busy ? "RENDERING" : state.result ? "READY" : "WAITING";
-  elements.resultBadge.className = `result-badge ${busy ? "busy" : state.result ? "ready" : ""}`.trim();
+  elements.addImage.disabled = busy;
+  elements.addVideo.disabled = busy;
+  elements.addUrl.disabled = busy;
+  elements.imageFile.disabled = busy;
+  elements.videoFile.disabled = busy;
+  elements.generateLabel.textContent = busy ? label : "Generate video";
+  elements.resultBadge.textContent = busy ? "RENDERING" : state.requestFailed ? "ERROR" : state.result ? "READY" : "WAITING";
+  elements.resultBadge.className = `result-badge ${busy ? "busy" : !state.requestFailed && state.result ? "ready" : ""}`.trim();
 }
 
 function updatePromptCount() {
@@ -268,8 +285,9 @@ function readFileAsDataUrl(file) {
 }
 
 async function addImages(files) {
-  if (state.references.length + files.length > MAX_REFERENCE_COUNT) throw new Error(`At most ${MAX_REFERENCE_COUNT} reference files are allowed`);
-  const existingBytes = state.references.reduce((total, reference) => total + (reference.fileSize || 0), 0);
+  const imageCount = state.references.filter((reference) => reference.kind === "image").length;
+  if (imageCount + files.length > MAX_IMAGE_REFERENCE_COUNT) throw new Error(`At most ${MAX_IMAGE_REFERENCE_COUNT} reference images are allowed`);
+  const existingBytes = state.references.reduce((total, reference) => total + (reference.kind === "image" ? reference.fileSize || 0 : 0), 0);
   const addedBytes = files.reduce((total, file) => total + file.size, 0);
   if (existingBytes + addedBytes > MAX_TOTAL_IMAGE_BYTES) throw new Error("Local images exceed the 45 MiB total limit");
   for (const file of files) {
@@ -286,16 +304,62 @@ async function addImages(files) {
   showToast(files.length === 1 ? "Image ready" : `${files.length} images ready`);
 }
 
+function addVideos(files) {
+  const videoCount = state.references.filter((reference) => reference.kind === "video").length;
+  if (videoCount + files.length > MAX_VIDEO_REFERENCE_COUNT) throw new Error(`At most ${MAX_VIDEO_REFERENCE_COUNT} reference videos are allowed`);
+  for (const file of files) {
+    const extension = file.name.split(".").pop()?.toLowerCase() || "";
+    if (!SUPPORTED_VIDEO_EXTENSIONS.has(extension) || (file.type && !SUPPORTED_VIDEO_TYPES.has(file.type))) {
+      throw new Error(`${file.name} must be an MP4, MOV, or WebM video`);
+    }
+    if (file.size > MAX_VIDEO_BYTES) throw new Error(`${file.name} exceeds the 256 MiB limit`);
+  }
+  state.references.push(...files.map((file) => ({
+    kind: "video",
+    label: file.name,
+    file,
+    fileSize: file.size,
+    uploadStatus: "ready",
+  })));
+  renderReferences();
+  showToast(files.length === 1 ? "Video ready to upload" : `${files.length} videos ready to upload`);
+}
+
+function parseVideoDataUrl(value) {
+  const comma = value.indexOf(",");
+  const header = comma >= 0 ? value.slice(0, comma) : "";
+  const payload = comma >= 0 ? value.slice(comma + 1) : "";
+  const match = /^data:(video\/(?:mp4|quicktime|webm));base64$/i.exec(header);
+  if (!match || !payload || payload.length % 4 === 1 || payload.length > Math.ceil(MAX_VIDEO_DATA_URL_BYTES / 3) * 4 + 4) {
+    throw new Error("Reference video data URL must be Base64 MP4, MOV, or WebM up to 64 MiB");
+  }
+  if (!/^[A-Za-z0-9+/]*={0,2}$/.test(payload)) throw new Error("Reference video data URL contains invalid Base64");
+  const padding = payload.endsWith("==") ? 2 : payload.endsWith("=") ? 1 : 0;
+  const bytes = Math.floor(payload.length * 3 / 4) - padding;
+  if (bytes > MAX_VIDEO_DATA_URL_BYTES) throw new Error("Reference video data URL exceeds the 64 MiB limit");
+  const mime = match[1].toLowerCase();
+  const extension = mime === "video/quicktime" ? "mov" : mime.slice("video/".length);
+  return { bytes, extension };
+}
+
 function addUrl() {
-  if (state.references.length >= MAX_REFERENCE_COUNT) throw new Error(`At most ${MAX_REFERENCE_COUNT} reference files are allowed`);
   const value = elements.urlInput.value.trim();
   if (!/^(?:https?:|data:)/i.test(value)) throw new Error("Reference URL must start with http(s): or data:");
   const kind = elements.urlKind.value;
-  if (kind === "video" && /^data:/i.test(value)) throw new Error("Reference videos require an HTTP(S) URL");
+  const kindCount = state.references.filter((reference) => reference.kind === kind).length;
+  const kindLimit = kind === "image" ? MAX_IMAGE_REFERENCE_COUNT : MAX_VIDEO_REFERENCE_COUNT;
+  if (kindCount >= kindLimit) throw new Error(`At most ${kindLimit} reference ${kind}s are allowed`);
   if (kind === "image" && /^data:/i.test(value) && !/^data:image\/(?:jpeg|png|webp|bmp|tiff|gif);base64,/i.test(value)) {
     throw new Error("Reference image data URL is invalid or unsupported");
   }
-  state.references.push({ kind, label: value, value, preview: kind === "image" && /^data:image\//i.test(value) ? value : null });
+  if (kind === "video" && /^data:/i.test(value)) {
+    const { bytes, extension } = parseVideoDataUrl(value);
+    const existingBytes = state.references.reduce((total, reference) => total + (reference.videoDataBytes || 0), 0);
+    if (existingBytes + bytes > MAX_TOTAL_VIDEO_DATA_URL_BYTES) throw new Error("Video data URLs exceed the 96 MiB total limit");
+    state.references.push({ kind, label: `video-data.${extension}`, value, fileSize: bytes, videoDataBytes: bytes, uploadStatus: "ready" });
+  } else {
+    state.references.push({ kind, label: value, value, preview: kind === "image" && /^data:image\//i.test(value) ? value : null });
+  }
   elements.urlInput.value = "";
   renderReferences();
 }
@@ -324,7 +388,9 @@ function renderReferences() {
     info.className = "media-info";
     const kind = document.createElement("span");
     kind.className = "media-kind";
-    kind.textContent = reference.kind;
+    kind.textContent = reference.kind === "video" && (reference.file || reference.uploadedUrl || /^data:/i.test(reference.value || ""))
+      ? `video · ${reference.uploadStatus || "ready"}`
+      : reference.kind;
     const name = document.createElement("span");
     name.className = "media-name";
     name.title = reference.label;
@@ -333,6 +399,7 @@ function renderReferences() {
     const remove = document.createElement("button");
     remove.className = "remove-media";
     remove.type = "button";
+    remove.disabled = state.busy;
     remove.dataset.index = String(index);
     remove.setAttribute("aria-label", `Remove ${reference.label}`);
     remove.textContent = "×";
@@ -343,6 +410,7 @@ function renderReferences() {
 
 function setResult(result) {
   state.result = result;
+  state.requestFailed = false;
   elements.resultEmpty.hidden = true;
   elements.resultContent.hidden = false;
   elements.resultVideo.src = result.proxy_url;
@@ -356,7 +424,10 @@ function setResult(result) {
 
 async function responseJson(response) {
   const payload = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(payload.error?.message || payload.error || payload.message || `Request failed (${response.status})`);
+  if (!response.ok || payload?.success === false) {
+    const error = typeof payload?.error === "string" ? payload.error : payload?.error?.message;
+    throw new Error(error || payload?.message || `Request failed (${response.status})`);
+  }
   return payload;
 }
 
@@ -402,6 +473,60 @@ async function generateDirect(baseUrl, key, body) {
   return { task_id: taskId, status, video_url: absoluteVideoUrl, proxy_url: absoluteVideoUrl, direct: true, base_url: baseUrl, api_key: key };
 }
 
+async function uploadReferenceVideo(baseUrl, key, reference, index, total) {
+  if (reference.uploadedUrl && reference.uploadBaseUrl === baseUrl) return reference.uploadedUrl;
+  reference.uploadStatus = "uploading";
+  renderReferences();
+  setBusy(true, `Uploading ${index}/${total}...`);
+  setRequestStatus(`Uploading reference video ${index}/${total}: ${reference.label}`);
+  try {
+    const fromDataUrl = !reference.file;
+    let media = reference.file;
+    let fileName = reference.file?.name;
+    if (!media) {
+      const { extension } = parseVideoDataUrl(reference.value);
+      const response = await fetch(reference.value);
+      const blob = await response.blob();
+      if (blob.size > MAX_VIDEO_DATA_URL_BYTES) throw new Error(`${reference.label} exceeds the 64 MiB data URL limit`);
+      media = blob;
+      fileName = `reference.${extension}`;
+    }
+    const form = new FormData();
+    form.append("file", media, fileName);
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), UPLOAD_TIMEOUT_MS);
+    let payload;
+    try {
+      payload = await responseJson(await fetch(`${baseUrl}/v1/videos/uploads`, {
+        method: "POST",
+        headers: { Accept: "application/json", ...authHeaders(key) },
+        body: form,
+        signal: controller.signal,
+      }));
+    } catch (error) {
+      if (error.name === "AbortError") throw new Error(`Reference video upload timed out after ${UPLOAD_TIMEOUT_MS / 60000} minutes`);
+      throw error;
+    } finally {
+      window.clearTimeout(timeout);
+    }
+    const url = payload?.data?.url || payload?.url;
+    if (typeof url !== "string" || !/^https?:\/\//i.test(url)) throw new Error("Gateway upload did not return an HTTP(S) URL");
+    reference.uploadedUrl = url;
+    reference.uploadBaseUrl = baseUrl;
+    if (fromDataUrl) {
+      reference.value = null;
+      reference.videoDataBytes = 0;
+    }
+    reference.uploadStatus = "uploaded";
+    renderReferences();
+    return url;
+  } catch (error) {
+    reference.uploadStatus = "failed";
+    renderReferences();
+    throw error;
+  }
+}
+
 async function submitGeneration(event) {
   event.preventDefault();
   if (state.busy) return;
@@ -414,16 +539,8 @@ async function submitGeneration(event) {
   }
   let baseUrl;
   try { baseUrl = normalizeBaseUrl(rawBaseUrl); } catch (error) { setRequestStatus(error.message, "error"); return; }
-
-  const content = [{ type: "text", text: prompt }];
-  for (const reference of state.references) {
-    content.push(reference.kind === "image"
-      ? { type: "image_url", image_url: { url: reference.value }, role: "reference_image" }
-      : { type: "video_url", video_url: { url: reference.value }, role: "reference_video" });
-  }
-  const body = {
+  const requestOptions = {
     model: elements.model.value,
-    content,
     duration: Number(elements.duration.value),
     ratio: elements.ratio.value,
     resolution: !elements.resolution.disabled && elements.resolution.value ? elements.resolution.value : undefined,
@@ -431,9 +548,41 @@ async function submitGeneration(event) {
     watermark: elements.watermark.checked,
   };
 
+  state.requestFailed = false;
   setBusy(true);
-  setRequestStatus(state.proxyAvailable ? "Submitting render through local proxy..." : "Submitting render and waiting for completion...");
   try {
+    const references = [...state.references];
+    const pendingUploads = references.filter((reference) => reference.kind === "video" &&
+      (reference.file || /^data:/i.test(reference.value || "")) &&
+      (!reference.uploadedUrl || reference.uploadBaseUrl !== baseUrl));
+    let uploadIndex = 0;
+    const content = [{ type: "text", text: prompt }];
+    for (const reference of references) {
+      if (reference.kind === "image") {
+        content.push({ type: "image_url", image_url: { url: reference.value }, role: "reference_image" });
+        continue;
+      }
+      const requiresUpload = reference.file || /^data:/i.test(reference.value || "");
+      const canReuseUpload = reference.uploadedUrl && reference.uploadBaseUrl === baseUrl;
+      if (reference.uploadedUrl && !canReuseUpload && !requiresUpload) {
+        throw new Error(`${reference.label} was uploaded through another gateway; remove it and add the video data URL again`);
+      }
+      const videoUrl = canReuseUpload ? reference.uploadedUrl : (requiresUpload
+        ? await uploadReferenceVideo(baseUrl, apiKey, reference, ++uploadIndex, pendingUploads.length)
+        : reference.value);
+      content.push({ type: "video_url", video_url: { url: videoUrl }, role: "reference_video" });
+    }
+    const body = {
+      model: requestOptions.model,
+      content,
+      duration: requestOptions.duration,
+      ratio: requestOptions.ratio,
+      resolution: requestOptions.resolution,
+      generate_audio: requestOptions.generate_audio,
+      watermark: requestOptions.watermark,
+    };
+    setBusy(true);
+    setRequestStatus(state.proxyAvailable ? "Submitting render through local proxy..." : "Submitting render and waiting for completion...");
     const result = state.proxyAvailable
       ? await responseJson(await fetch("/api/generate", { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json" }, body: JSON.stringify({ base_url: baseUrl, api_key: apiKey, ...body }) }))
       : await generateDirect(baseUrl, apiKey, body);
@@ -441,9 +590,16 @@ async function submitGeneration(event) {
     setRequestStatus("Render completed.", "success");
     showToast("Video is ready");
   } catch (error) {
+    state.requestFailed = true;
+    for (const reference of state.references) {
+      if (reference.kind === "video" && reference.file && reference.uploadedUrl) {
+        reference.uploadedUrl = null;
+        reference.uploadBaseUrl = null;
+        reference.uploadStatus = "ready";
+      }
+    }
+    renderReferences();
     setRequestStatus(error.message, "error");
-    elements.resultBadge.textContent = "ERROR";
-    elements.resultBadge.className = "result-badge";
   } finally {
     setBusy(false);
   }
@@ -484,15 +640,13 @@ async function copyBase64() {
 
 elements.form.addEventListener("submit", submitGeneration);
 elements.prompt.addEventListener("input", updatePromptCount);
-$("#addImage").addEventListener("click", () => elements.imageFile.click());
-$("#addVideoUrl").addEventListener("click", () => {
-  elements.urlKind.value = "video";
-  elements.urlInput.focus();
-});
+elements.addImage.addEventListener("click", () => elements.imageFile.click());
+elements.addVideo.addEventListener("click", () => elements.videoFile.click());
 elements.imageFile.addEventListener("change", async (event) => { try { await addImages([...event.target.files]); } catch (error) { showToast(error.message); } event.target.value = ""; });
-$("#addUrl").addEventListener("click", () => { try { addUrl(); } catch (error) { showToast(error.message); } });
+elements.videoFile.addEventListener("change", (event) => { try { addVideos([...event.target.files]); } catch (error) { showToast(error.message); } event.target.value = ""; });
+elements.addUrl.addEventListener("click", () => { try { addUrl(); } catch (error) { showToast(error.message); } });
 elements.urlInput.addEventListener("keydown", (event) => { if (event.key === "Enter") { event.preventDefault(); try { addUrl(); } catch (error) { showToast(error.message); } } });
-elements.mediaList.addEventListener("click", (event) => { const button = event.target.closest(".remove-media"); if (!button) return; state.references.splice(Number(button.dataset.index), 1); renderReferences(); });
+elements.mediaList.addEventListener("click", (event) => { const button = event.target.closest(".remove-media"); if (!button || state.busy) return; state.references.splice(Number(button.dataset.index), 1); renderReferences(); });
 $("#toggleKey").addEventListener("click", (event) => { const visible = elements.apiKey.type === "text"; elements.apiKey.type = visible ? "password" : "text"; event.currentTarget.textContent = visible ? "SHOW" : "HIDE"; event.currentTarget.setAttribute("aria-label", visible ? "Show API key" : "Hide API key"); });
 elements.copyUrlButton.addEventListener("click", () => copyText(elements.resultUrl.value, "URL copied"));
 elements.copyBase64Button.addEventListener("click", copyBase64);

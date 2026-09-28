@@ -1,6 +1,6 @@
 ---
 name: doubao-seedance
-description: "通过 Tuzi API 网关调用豆包 Seedance 视频模型，支持多条参考图片/视频、URL、data URL 和本地文件 Base64。"
+description: "通过 Tuzi API 网关调用豆包 Seedance 视频模型，支持多条参考图片/视频、URL、data URL 和本地文件自动处理。"
 ---
 
 # 豆包 Seedance 视频生成
@@ -44,19 +44,23 @@ node skills/doubao-seedance/scripts/run.mjs \
   --video ./refs/reference.mp4
 ```
 
-每条参考媒体都支持：
+参考图片最多 9 条，参考视频最多 3 条，混合输入保持命令行中的传入顺序。每条参考媒体都支持：
 
 - `http(s)://` URL：原样提交；
-- `data:<mime>;base64,...`：原样提交；
-- 本地文件：默认读取后转成 `data:` URL。为避免无界内存占用，默认限制单个文件为 64 MiB，可用 `--max-media-bytes` 调整。
+- 图片 `data:<mime>;base64,...`：原样提交；
+- 视频 `data:video/...;base64,...`：有界解码后自动上传到 `POST /v1/videos/uploads`，再提交返回的 HTTP(S) URL；
+- 本地图片：读取后转成 `data:` URL；
+- 本地 MP4、MOV、WebM 视频：通过流式 multipart 自动上传到 `POST /v1/videos/uploads`，不会整体读入内存。
 
-如果上游要求参考视频必须是公网 URL，可通过 `--upload-command` 注入上传器。上传器按以下约定接收参数，并且只向标准输出打印最终 `http(s)` URL：
+本地文件和视频 data URL 默认限制为 64 MiB，可用 `--max-media-bytes` 调整。视频上传接口使用同一网关 URL 和 Key，终端用户不需要配置额外的对象存储；网关管理员必须已配置 `PurposeStaging` 的公网可读存储和生命周期，否则上传接口会返回 `503`。
+
+如需覆盖网关内置上传，可通过 `--upload-command` 注入自定义上传器。上传器按以下约定接收参数，并且只向标准输出打印最终 `http(s)` URL：
 
 ```text
 uploader <local-file> <mime-type> <image|video>
 ```
 
-未配置上传器时不要伪造公网 URL；视频 Base64 是否被当前网关/上游接受，以实际渠道能力为准。
+未配置自定义上传器时，本地视频和视频 data URL 默认使用网关上传接口。
 
 ## 输出选项
 

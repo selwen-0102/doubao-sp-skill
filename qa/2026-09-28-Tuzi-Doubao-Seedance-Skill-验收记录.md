@@ -4,13 +4,14 @@
 
 - 四个目标模型名称校验；
 - 多条参考图片和参考视频；
-- HTTP(S) URL、`data:` URL、本地文件 Base64；
+- HTTP(S) URL、`data:` URL、本地图片 Base64、本地视频自动上传；
 - 创建任务、轮询终态、视频 URL 提取；
 - 流式下载和可选 Base64 输出；
 - API Key 不写入日志或 Skill 文件。
 - Web 页面加载、生成接口代理、短期视频代理。
 - 模型元数据驱动的时长、比例、分辨率选项。
-- 本地图片自动转换为 Base64 `data:` URL，视频 `data:` URL 提前拒绝。
+- 本地图片自动转换为 Base64 `data:` URL；本地视频和视频 data URL 自动上传。
+- 图片最多 9 条、视频最多 3 条，混合输入保持顺序。
 
 ## 验收结果
 
@@ -22,7 +23,7 @@
 | `--help` 参数说明 | 通过 |
 | 模拟网关完整调用 | 通过 |
 | 多媒体输入数量与顺序 | 通过 |
-| 本地图片/视频转 `data:` URL | 通过 |
+| 本地图片转 `data:` URL | 通过 |
 | 任务轮询与结果 URL | 通过 |
 | 流式下载 | 通过 |
 | Base64 输出 | 通过 |
@@ -33,7 +34,10 @@
 | GitHub Pages 参数快照工作流 | 通过：四模型快照与 Pages 发布成功 |
 | 线上动态参数显示 | 通过：Pages 切换标准版后显示部署快照、默认 `1080p` 和四档分辨率 |
 | 本地图片自动转换 | 通过：浏览器选择 PNG 后生成 `data:image/png;base64,...` 并显示缩略图 |
-| 视频 `data:` URL 前后端拦截 | 通过：浏览器立即提示，Node API 返回 `400` |
+| 本地视频 multipart 上传 | 通过：CLI 使用流式 multipart，模拟网关收到 `file` 和文件名 |
+| 视频 data URL 有界解码并上传 | 通过：3 字节 MP4 data URL 上传后以 HTTP(S) URL 创建任务 |
+| 图片/视频数量上限 | 通过：第 4 条视频在 CLI 和 Node 代理均被拒绝 |
+| Web 本地视频入口 | 通过：页面显示本地多选 `Video` 按钮，视频 data URL 显示 `READY` |
 | 图片 data URL 网关请求 | 通过：模拟网关收到 `reference_image` 并完成任务轮询 |
 
 ## 验收命令
@@ -44,7 +48,7 @@ python3 /Users/shuidiyu/.codex/skills/.system/skill-creator/scripts/quick_valida
   skills/doubao-seedance
 ```
 
-另外使用临时 HTTP 模拟网关验证了 POST、轮询、下载和 Base64 流程，临时文件未写入仓库。
+另外使用临时 HTTP 模拟网关验证了本地视频和视频 data URL 上传、混合媒体顺序、POST、轮询、下载和 Base64 流程，临时文件未写入仓库。
 
 可视化应用验收命令：
 

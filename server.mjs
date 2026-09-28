@@ -14,7 +14,8 @@ const HOST = process.env.HOST || "127.0.0.1";
 const MAX_BODY_BYTES = 64 * 1024 * 1024;
 const MAX_IMAGE_DATA_URL_CHARS = 40 * 1024 * 1024 + 1024;
 const MAX_REFERENCE_URL_CHARS = 32 * 1024;
-const MAX_REFERENCE_COUNT = 8;
+const MAX_IMAGE_REFERENCES = 9;
+const MAX_VIDEO_REFERENCES = 3;
 const TASK_TIMEOUT_MS = 10 * 60 * 1000;
 const POLL_INTERVAL_MS = 15 * 1000;
 const VIDEO_TOKEN_TTL_MS = 15 * 60 * 1000;
@@ -120,11 +121,10 @@ function validateContent(content) {
   if (!Array.isArray(content) || content.length === 0) {
     throw new HttpError(400, "At least one text prompt is required");
   }
-  if (content.length > MAX_REFERENCE_COUNT + 1) {
-    throw new HttpError(400, `At most ${MAX_REFERENCE_COUNT} reference files are allowed`);
-  }
 
   let hasText = false;
+  let imageCount = 0;
+  let videoCount = 0;
   for (const item of content) {
     if (!item || typeof item !== "object") throw new HttpError(400, "Invalid content item");
     if (item.type === "text") {
@@ -142,10 +142,14 @@ function validateContent(content) {
       throw new HttpError(400, "Reference media URL is required");
     }
     if (item.type === "video_url") {
+      videoCount += 1;
+      if (videoCount > MAX_VIDEO_REFERENCES) throw new HttpError(400, `At most ${MAX_VIDEO_REFERENCES} reference videos are allowed`);
       if (!/^https?:\/\//i.test(media.url)) throw new HttpError(400, "Reference videos require an HTTP(S) URL");
       if (media.url.length > MAX_REFERENCE_URL_CHARS) throw new HttpError(413, "Reference video URL is too long");
       continue;
     }
+    imageCount += 1;
+    if (imageCount > MAX_IMAGE_REFERENCES) throw new HttpError(400, `At most ${MAX_IMAGE_REFERENCES} reference images are allowed`);
     const isDataUrl = /^data:/i.test(media.url);
     if (isDataUrl && !/^data:image\/(?:jpeg|png|webp|bmp|tiff|gif);base64,/i.test(media.url)) {
       throw new HttpError(400, "Reference image data URL is invalid or unsupported");

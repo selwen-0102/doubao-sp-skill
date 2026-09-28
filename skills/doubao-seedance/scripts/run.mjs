@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 
-import { createWriteStream } from "node:fs";
+import { createReadStream, createWriteStream } from "node:fs";
 import { mkdir, readFile, rename, rm, stat } from "node:fs/promises";
 import { spawn } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { once } from "node:events";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -20,6 +21,8 @@ const DEFAULT_MAX_BASE64_BYTES = 128 * 1024 * 1024;
 const DEFAULT_POLL_INTERVAL_SECONDS = 15;
 const MIN_POLL_INTERVAL_SECONDS = 3;
 const DEFAULT_TIMEOUT_SECONDS = 600;
+const MAX_IMAGE_REFERENCES = 9;
+const MAX_VIDEO_REFERENCES = 3;
 
 const MIME_BY_EXTENSION = new Map([
   [".jpg", "image/jpeg"],
@@ -37,6 +40,8 @@ const MIME_BY_EXTENSION = new Map([
   [".avi", "video/x-msvideo"],
   [".mkv", "video/x-matroska"],
 ]);
+const SUPPORTED_VIDEO_EXTENSIONS = new Set([".mp4", ".mov", ".webm"]);
+const SUPPORTED_VIDEO_MIMES = new Set(["video/mp4", "video/quicktime", "video/webm"]);
 
 function printHelp() {
   console.log(`Usage:
@@ -57,8 +62,8 @@ Request:
   --size <size>               Override size, for example 720p
 
 Media:
-  --upload-command <path>     Executable: <file> <mime> <image|video> -> URL
-  --max-media-bytes <bytes>   Local media limit, default 67108864
+  --upload-command <path>     Optional custom uploader: <file> <mime> <image|video> -> URL
+  --max-media-bytes <bytes>   Local media/data-video limit, default 67108864
 
 Polling/output:
   --poll-interval <seconds>   Default 15, minimum 3
@@ -76,6 +81,7 @@ function parseArgs(argv) {
     model: DEFAULT_MODEL,
     images: [],
     videos: [],
+    media: [],
     download: false,
     base64: false,
     preflight: false,
@@ -109,9 +115,11 @@ function parseArgs(argv) {
         break;
       case "--image":
         args.images.push(next());
+        args.media.push({ kind: "image", source: args.images.at(-1) });
         break;
       case "--video":
         args.videos.push(next());
+        args.media.push({ kind: "video", source: args.videos.at(-1) });
         break;
       case "--request-json":
         args.requestJson = next();
@@ -242,8 +250,9 @@ async function requestJson(url, { key, method = "GET", body, timeoutMs = 60000 }
     } catch {
       data = { raw: text };
     }
-    if (!response.ok) {
-      const message = data?.error?.message || data?.message || response.statusText;
+    if (!response.ok || data?.success === false) {
+      const error = typeof data?.error === "string" ? data.error : data?.error?.message;
+      const message = error || data?.message || response.statusText;
       throw new Error(`HTTP ${response.status}: ${message}`);
     }
     return data;
@@ -263,7 +272,7 @@ function assertSupportedModel(model) {
   }
 }
 
-async function buildRequest(args) {
+async function buildRequest(args, connection) {
   let request = {};
   if (args.requestJson) {
     try {
@@ -289,19 +298,16 @@ async function buildRequest(args) {
     throw new Error("Missing prompt. Provide --prompt or a text item in --request-json.");
   }
 
-  for (const source of args.images) {
-    content.push({
-      type: "image_url",
-      image_url: { url: await resolveMediaSource(source, "image", args) },
-      role: "reference_image",
-    });
-  }
-  for (const source of args.videos) {
-    content.push({
-      type: "video_url",
-      video_url: { url: await resolveMediaSource(source, "video", args) },
-      role: "reference_video",
-    });
+  const imageCount = content.filter((item) => item?.type === "image_url").length + args.images.length;
+  const videoCount = content.filter((item) => item?.type === "video_url").length + args.videos.length;
+  if (imageCount > MAX_IMAGE_REFERENCES) throw new Error(`At most ${MAX_IMAGE_REFERENCES} reference images are allowed`);
+  if (videoCount > MAX_VIDEO_REFERENCES) throw new Error(`At most ${MAX_VIDEO_REFERENCES} reference videos are allowed`);
+
+  for (const { kind, source } of args.media) {
+    const url = await resolveMediaSource(source, kind, args, connection);
+    content.push(kind === "image"
+      ? { type: "image_url", image_url: { url }, role: "reference_image" }
+      : { type: "video_url", video_url: { url }, role: "reference_video" });
   }
 
   request = { ...request, model: args.model, content };
@@ -311,9 +317,24 @@ async function buildRequest(args) {
   return request;
 }
 
-async function resolveMediaSource(source, kind, args) {
-  if (/^(?:https?:|asset:|data:)/i.test(source)) {
+async function resolveMediaSource(source, kind, args, connection) {
+  if (/^(?:https?:|asset:)/i.test(source)) {
     return source;
+  }
+  if (/^data:/i.test(source)) {
+    if (kind === "image") return source;
+    const media = videoDataUrl(source, args.maxMediaBytes);
+    log("upload.start", { source: "data-url", bytes: media.bytes.length });
+    const url = await uploadVideo({
+      ...connection,
+      fileName: `reference.${media.extension}`,
+      mime: media.mime,
+      size: media.bytes.length,
+      stream: () => Readable.from([media.bytes]),
+      timeoutMs: args.timeoutSeconds * 1000,
+    });
+    log("upload.done", { source: "data-url", url });
+    return url;
   }
 
   const filePath = resolve(process.cwd(), source);
@@ -328,17 +349,105 @@ async function resolveMediaSource(source, kind, args) {
   }
 
   const mime = mimeForFile(filePath, kind);
+  if (kind === "video") {
+    const extension = extname(filePath).toLowerCase();
+    if (!SUPPORTED_VIDEO_EXTENSIONS.has(extension) || !SUPPORTED_VIDEO_MIMES.has(mime)) {
+      throw new Error(`Local video must be MP4, MOV, or WebM: ${source}`);
+    }
+  }
   if (args.uploadCommand) {
     return runUploader(args.uploadCommand, filePath, mime, kind);
   }
   if (fileStat.size > args.maxMediaBytes) {
     throw new Error(
-      `Local ${kind} is ${fileStat.size} bytes, above --max-media-bytes ${args.maxMediaBytes}. Configure --upload-command for a public URL.`,
+      `Local ${kind} is ${fileStat.size} bytes, above --max-media-bytes ${args.maxMediaBytes}.`,
     );
+  }
+
+  if (kind === "video") {
+    log("upload.start", { file: filePath, bytes: fileStat.size });
+    const url = await uploadVideo({
+      ...connection,
+      fileName: basename(filePath),
+      mime,
+      size: fileStat.size,
+      stream: () => createReadStream(filePath),
+      timeoutMs: args.timeoutSeconds * 1000,
+    });
+    log("upload.done", { file: filePath, url });
+    return url;
   }
 
   const bytes = await readFile(filePath);
   return `data:${mime};base64,${bytes.toString("base64")}`;
+}
+
+function videoDataUrl(value, maxBytes) {
+  const comma = value.indexOf(",");
+  const header = comma >= 0 ? value.slice(0, comma) : "";
+  const payload = comma >= 0 ? value.slice(comma + 1) : "";
+  const match = /^data:(video\/(?:mp4|quicktime|webm));base64$/i.exec(header);
+  if (!match || !payload || payload.length % 4 === 1 || payload.length > Math.ceil(maxBytes / 3) * 4 + 4) {
+    throw new Error(`Video data URL must be Base64 MP4, MOV, or WebM up to ${maxBytes} bytes`);
+  }
+  if (!/^[A-Za-z0-9+/]*={0,2}$/.test(payload)) throw new Error("Video data URL contains invalid Base64");
+  const bytes = Buffer.from(payload, "base64");
+  if (bytes.length > maxBytes) throw new Error(`Video data URL exceeds --max-media-bytes ${maxBytes}`);
+  const mime = match[1].toLowerCase();
+  return { bytes, mime, extension: mime === "video/quicktime" ? "mov" : mime.slice("video/".length) };
+}
+
+async function uploadVideo({ url, key, fileName, mime, size, stream, timeoutMs }) {
+  const boundary = `----doubao-seedance-${randomBytes(16).toString("hex")}`;
+  const safeFileName = basename(fileName).replace(/["\r\n]/g, "_");
+  const head = Buffer.from(
+    `--${boundary}\r\n` +
+    `Content-Disposition: form-data; name="file"; filename="${safeFileName}"\r\n` +
+    `Content-Type: ${mime}\r\n\r\n`,
+  );
+  const tail = Buffer.from(`\r\n--${boundary}--\r\n`);
+  const body = Readable.from((async function* multipartBody() {
+    yield head;
+    for await (const chunk of stream()) yield chunk;
+    yield tail;
+  })());
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(`${url}/v1/videos/uploads`, {
+      method: "POST",
+      headers: {
+        Authorization: authHeader(key),
+        Accept: "application/json",
+        "Content-Type": `multipart/form-data; boundary=${boundary}`,
+        "Content-Length": String(head.length + size + tail.length),
+      },
+      body,
+      duplex: "half",
+      signal: controller.signal,
+    });
+    const raw = await response.text();
+    let payload = null;
+    try {
+      payload = raw ? JSON.parse(raw) : null;
+    } catch {
+      payload = { raw };
+    }
+    if (!response.ok || payload?.success === false) {
+      const error = typeof payload?.error === "string" ? payload.error : payload?.error?.message;
+      throw new Error(`HTTP ${response.status}: ${error || payload?.message || response.statusText}`);
+    }
+    const uploadedUrl = payload?.data?.url || payload?.url;
+    if (typeof uploadedUrl !== "string" || !/^https?:\/\//i.test(uploadedUrl)) {
+      throw new Error("Gateway upload did not return an HTTP(S) URL");
+    }
+    return uploadedUrl;
+  } catch (error) {
+    if (error.name === "AbortError") throw new Error("Video upload timed out");
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 function mimeForFile(filePath, kind) {
@@ -495,12 +604,11 @@ async function main() {
     throw new Error(`--poll-interval must be at least ${MIN_POLL_INTERVAL_SECONDS} seconds`);
   }
   const { url: baseUrl, key } = resolveConnection(args);
-  const request = await buildRequest(args);
-  log("create.start", { url: `${baseUrl}/v1/videos`, model: args.model });
-
   if (args.preflight) {
     await requestJson(`${baseUrl}/v1/models`, { key });
   }
+  const request = await buildRequest(args, { url: baseUrl, key });
+  log("create.start", { url: `${baseUrl}/v1/videos`, model: args.model });
   const created = await requestJson(`${baseUrl}/v1/videos`, {
     method: "POST",
     key,
