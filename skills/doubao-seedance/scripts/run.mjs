@@ -48,7 +48,7 @@ function printHelp() {
   node skills/doubao-seedance/scripts/run.mjs --model <model> --prompt <text> [options]
 
 Connection:
-  --url <url>                 Tuzi API base URL; default DOUBAO_SEEDANCE_URL
+  --url <url>                 API base URL; default DOUBAO_SEEDANCE_URL
   --key <key>                 API key; default DOUBAO_SEEDANCE_KEY
 
 Request:
@@ -210,8 +210,10 @@ function normalizeBaseUrl(value) {
   parsed.search = "";
   parsed.hash = "";
   parsed.pathname = parsed.pathname.replace(/\/+$/, "");
-  if (parsed.pathname.endsWith("/v1")) {
-    parsed.pathname = parsed.pathname.slice(0, -3).replace(/\/+$/, "");
+  for (const suffix of ["/v1/videos", "/v1"]) {
+    if (!parsed.pathname.endsWith(suffix)) continue;
+    parsed.pathname = parsed.pathname.slice(0, -suffix.length).replace(/\/+$/, "");
+    break;
   }
   return parsed.toString().replace(/\/$/, "");
 }
@@ -339,8 +341,7 @@ async function resolveMediaSource(source, kind, args) {
   }
   if (/^data:/i.test(source)) {
     if (kind === "image") return source;
-    const media = videoDataUrl(source, args.maxMediaBytes);
-    return media.value;
+    return videoDataUrl(source, args.maxMediaBytes).value;
   }
 
   const filePath = resolve(process.cwd(), source);

@@ -2,62 +2,43 @@
 
 ## 验收范围
 
-- 四个目标模型名称校验；
-- 多条参考图片和参考视频；
-- HTTP(S) URL、`data:` URL、本地图片和视频自动 Base64；
-- 创建任务、轮询终态、视频 URL 提取；
-- 流式下载和可选 Base64 输出；
-- API Key 不写入日志或 Skill 文件。
-- Web 页面加载、生成接口代理、短期视频代理。
-- 模型元数据驱动的时长、比例、分辨率选项。
-- 本地图片和视频自动转换为 Base64 `data:` URL，并统一提交到 `/v1/videos`。
-- 图片最多 9 条、视频最多 3 条，混合输入保持顺序。
-
-## 验收结果
-
-| 检查项 | 结果 |
-| --- | --- |
-| Skill frontmatter 与目录结构 | 通过 |
-| `agents/openai.yaml` 解析 | 通过 |
-| Node.js 脚本语法检查 | 通过 |
-| `--help` 参数说明 | 通过 |
-| 模拟网关完整调用 | 通过 |
-| 多媒体输入数量与顺序 | 通过 |
-| 本地图片转 `data:` URL | 通过 |
-| 任务轮询与结果 URL | 通过 |
-| 流式下载 | 通过 |
-| Base64 输出 | 通过 |
-| 非法模型拒绝 | 通过 |
-| Web 页面静态资源加载 | 通过：本机浏览器桌面视口已验证 |
-| Web `/api/generate` 代理与视频流 | 通过：模拟网关提交/轮询及 `206 Range` 视频流已验证 |
-| API 站模型参数实时同步 | 通过：本地页面切换标准版显示 `16:9` 与 `480p/720p/1080p/4k` |
-| GitHub Pages 参数快照工作流 | 通过：四模型快照与 Pages 发布成功 |
-| 线上动态参数显示 | 通过：Pages 切换标准版后显示部署快照、默认 `1080p` 和四档分辨率 |
-| 本地图片自动转换 | 通过：浏览器选择 PNG 后生成 `data:image/png;base64,...` 并显示缩略图 |
-| 本地视频自动 Base64 | 通过：CLI 将本地 MP4 转成 `data:video/mp4;base64,...` 并提交到 `/v1/videos` |
-| 视频 data URL 直接提交 | 通过：模拟网关收到 `content[].video_url.url`，没有 `/v1/videos/uploads` 请求 |
-| 图片/视频数量上限 | 通过：第 4 条视频在 CLI 和 Node 代理均被拒绝 |
-| Web 本地视频入口 | 通过：页面显示本地多选 `Video` 按钮，视频 data URL 显示 `READY` |
-| 图片 data URL 网关请求 | 通过：模拟网关收到 `reference_image` 并完成任务轮询 |
+- 仓库不再包含网页、HTTP 服务或 GitHub Pages 工作流；
+- Skill frontmatter、目录结构和 Codex UI 元数据；
+- macOS 与 Windows PowerShell 安装脚本；
+- 四个 Seedance 模型名称校验；
+- HTTP(S) URL、data URL、本地图片和本地视频自动处理；
+- 多条图片/视频输入顺序与数量限制；
+- 任务创建、终态轮询、视频 URL 提取和流式下载；
+- API URL 根地址、`/v1` 与完整 `/v1/videos` 形式兼容；
+- API Key 不写入日志、Skill 文件或结果 JSON。
 
 ## 验收命令
 
 ```bash
 node --check skills/doubao-seedance/scripts/run.mjs
+node skills/doubao-seedance/scripts/run.mjs --help
+bash -n install.sh
 python3 /Users/shuidiyu/.codex/skills/.system/skill-creator/scripts/quick_validate.py \
   skills/doubao-seedance
+git diff --check
 ```
 
-另外使用临时 HTTP 模拟网关验证了本地视频和视频 data URL 上传、混合媒体顺序、POST、轮询、下载和 Base64 流程，临时文件未写入仓库。
+安装脚本使用仓库外的临时 `CODEX_HOME` 做实际下载安装验证，不在仓库创建测试文件。
 
-可视化应用验收命令：
+## 验收结果
 
-```bash
-node --check server.mjs
-node --check web/app.js
-npm start
-```
+| 检查项 | 结果 |
+| --- | --- |
+| Skill 结构校验 | 通过：官方 `quick_validate.py` 返回 `Skill is valid!` |
+| Node.js 语法与 `--help` | 通过 |
+| macOS 安装脚本语法 | 通过：`bash -n install.sh` |
+| macOS 仓库内实际安装 | 通过：安装到临时 `CODEX_HOME` 并成功运行 `--help` |
+| macOS 浅克隆实际安装 | 通过：从标准输入运行安装器，浅克隆后安装成功 |
+| 模拟 API 完整调用 | 通过：本地 PNG/MP4 转 data URL、创建、轮询和下载均成功 |
+| API URL 形式兼容 | 通过：完整 `/v1/videos` 地址被正确规范化 |
+| 视频流式下载 | 通过：结果文件内容和字节数与模拟服务一致 |
+| Windows PowerShell 脚本 | 结构审查通过；待 Windows PowerShell 实机最终确认 |
+| 网页及 Pages 文件清理 | 通过：网页、HTTP 服务和 Pages 工作流均已删除 |
+| Git 差异完整性 | 通过：`git diff --check` 无错误 |
 
-然后访问 `http://localhost:8787/health`，应返回 `{"ok":true}`；浏览器访问 `/` 应显示 Doubao Seedance Studio 页面。
-
-动态参数检查：填写 `https://api.tu-zi.com`，切换四个模型，确认 `Duration`、`Ratio`、`Resolution / size` 随模型变化，状态显示“参数已从 API 站同步”。
+Windows 实机最终调用需要在 Windows PowerShell、Git 与 Node.js 18+ 环境中执行。尝试使用微软 PowerShell x64 容器解析时，容器在 ARM 主机模拟层崩溃，因此没有将该次运行误记为通过；当前结论仅覆盖结构审查。

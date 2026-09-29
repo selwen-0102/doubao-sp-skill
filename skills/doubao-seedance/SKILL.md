@@ -1,76 +1,61 @@
 ---
 name: doubao-seedance
-description: "通过 Tuzi API 网关调用豆包 Seedance 视频模型，支持多条参考图片/视频、URL、data URL 和本地文件自动处理。"
+description: "通过用户提供的视频 API 调用豆包 Seedance 模型，自动处理多条参考图片或视频，并可下载生成结果。"
 ---
 
 # 豆包 Seedance 视频生成
 
-用于通过 Tuzi API 网关的 OpenAI 兼容视频接口调用以下模型：
+使用 `scripts/run.mjs` 创建视频任务、轮询终态并按需下载结果。不要要求用户手动转换本地图片或视频。
+
+## 执行流程
+
+1. 从用户输入或环境变量读取 API URL 与 API Key：
+   - `DOUBAO_SEEDANCE_URL`
+   - `DOUBAO_SEEDANCE_KEY`
+2. 若缺少其中一项，再向用户询问；不要输出、记录或写入真实 API Key。
+3. 根据用户要求选择模型、提示词、参考媒体和输出选项。
+4. 调用当前 Skill 目录中的 `scripts/run.mjs`。使用绝对路径，避免依赖当前工作目录下存在 `skills/`。
+5. 报告任务状态、视频 URL 和实际下载路径；失败时返回 API 错误，不静默重复创建收费任务。
+
+## 支持模型
 
 - `doubao-seedance-2-5-260628`
 - `doubao-seedance-2-0-260128`
 - `doubao-seedance-2-0-fast-260128`
 - `doubao-seedance-2-0-mini-260615`
 
-## 使用方式
+API URL 可以是站点根地址、`/v1` 地址或完整的 `/v1/videos` 地址。目标 API 需要兼容 `POST /v1/videos` 与 `GET /v1/videos/{task_id}`，不限制服务商或域名。
 
-只需要网关地址和令牌。推荐通过环境变量传入，避免把令牌写入命令历史：
-
-```bash
-export DOUBAO_SEEDANCE_URL="https://your-tuzi-api.example.com"
-export DOUBAO_SEEDANCE_KEY="sk-..."
-```
-
-调用脚本：
+## 调用示例
 
 ```bash
-node skills/doubao-seedance/scripts/run.mjs \
+node /absolute/path/to/doubao-seedance/scripts/run.mjs \
   --model doubao-seedance-2-5-260628 \
-  --prompt "一只纸飞机穿过阳光明亮的房间，镜头平稳，电影感"
+  --prompt "保持主体一致，镜头缓慢推进" \
+  --image /absolute/path/to/reference.png \
+  --video /absolute/path/to/reference.mp4 \
+  --download
 ```
 
-也可以用 `--url` 和 `--key` 覆盖环境变量。脚本会创建任务并轮询到终态，默认在标准输出返回 JSON，包含 `task_id`、`status` 和 `video_url`。
+`--image` 和 `--video` 可重复传入，混合输入顺序会保留。参考图片最多 9 条，参考视频最多 3 条。
 
-## 参考媒体
+每条参考媒体支持：
 
-`--image` 和 `--video` 可重复传入多条，顺序会保留：
+- HTTP(S) URL：原样提交；
+- 图片 data URL：原样提交；
+- 视频 data URL：校验 Base64、MIME 与大小后提交；
+- 本地图片：自动读取并转成图片 data URL；
+- 本地 MP4、MOV、WebM：自动读取并转成视频 data URL。
 
-```bash
-node skills/doubao-seedance/scripts/run.mjs \
-  --model doubao-seedance-2-0-260128 \
-  --prompt "保持主体一致，缓慢推进镜头" \
-  --image ./refs/first.png \
-  --image https://example.com/style.jpg \
-  --video ./refs/reference.mp4
-```
+单个本地媒体与视频 data URL 默认限制为 20 MiB，全部内联媒体合计限制为 45 MiB。若 API 不接受视频 data URL，优先让用户提供视频 URL；也可以使用 `--upload-command` 接入返回 HTTP(S) URL 的自定义上传器。
 
-参考图片最多 9 条，参考视频最多 3 条，混合输入保持命令行中的传入顺序。每条参考媒体都支持：
+## 输出
 
-- `http(s)://` URL：原样提交；
-- 图片 `data:<mime>;base64,...`：原样提交；
-- 视频 `data:video/...;base64,...`：校验大小和格式后直接作为 `video_url.url` 提交；
-- 本地图片：读取后转成 `data:` URL；
-- 本地 MP4、MOV、WebM 视频：读取后转成 `data:video/...;base64,...`，随 `POST /v1/videos` 一次提交。
+- 默认输出 JSON，包含 `task_id`、`status` 和 `video_url`。
+- `--download`：流式下载到 `./doubao-seedance-output`。
+- `--download-dir <dir>`：指定下载目录并自动启用下载。
+- `--base64`：在结果 JSON 中附加视频 Base64，仅在用户明确需要时使用。
+- `--request-json`：补充 API 支持的字段，例如 `duration`、`ratio`、`generate_audio`、`watermark`。
+- `--poll-interval` 和 `--timeout`：调整轮询间隔与总等待时间；轮询间隔不能低于 3 秒。
 
-本地文件和视频 data URL 默认限制为 20 MiB，可用 `--max-media-bytes` 调整；全部内联参考媒体合计限制为 45 MiB，避免 Base64 请求造成过高内存占用。网关必须允许 `video_url.url` 使用 `data:video/...;base64,...`。
-
-如需覆盖网关内置上传，可通过 `--upload-command` 注入自定义上传器。上传器按以下约定接收参数，并且只向标准输出打印最终 `http(s)` URL：
-
-```text
-uploader <local-file> <mime-type> <image|video>
-```
-
-未配置自定义上传器时，本地视频直接转为 data URL；配置自定义上传器后，本地文件将改用上传器返回的 HTTP(S) URL。
-
-## 输出选项
-
-- `--download`：把完成的视频流式下载到 `./doubao-seedance-output`；用 `--download-dir` 指定目录。
-- `--base64`：在结果 JSON 中附加 `video_base64`。这是显式的大输出操作，只对确实需要 Base64 的场景使用。
-- `--poll-interval`、`--timeout`：调整轮询间隔和超时时间；轮询间隔不能小于 3 秒。
-- `--request-json`：补充或覆盖网关支持的其他请求字段，例如 `duration`、`ratio`、`generate_audio`、`watermark`。
-
-完整参数和请求构造逻辑见 [scripts/run.mjs](scripts/run.mjs)。不要在日志或 Skill 文件中写入真实令牌。
-
-## 分发
-
-将整个 `doubao-seedance` 目录安装或复制到使用者的 Codex Skills 目录，保留 `SKILL.md`、`agents/openai.yaml` 和 `scripts/run.mjs` 三个部分即可。每位使用者只需配置自己的 `DOUBAO_SEEDANCE_URL` 与 `DOUBAO_SEEDANCE_KEY`。
+完整参数使用 `node scripts/run.mjs --help` 查看。
