@@ -20,13 +20,15 @@
 macOS 终端：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/selwen-0102/doubao-sp-skill/main/install.sh | bash
+curl -fsSL -H 'Accept: application/vnd.github.raw+json' \
+  https://api.github.com/repos/selwen-0102/doubao-sp-skill/contents/install.sh | bash
 ```
 
 Windows PowerShell：
 
 ```powershell
-irm https://raw.githubusercontent.com/selwen-0102/doubao-sp-skill/main/install.ps1 | iex
+irm -Headers @{ Accept = "application/vnd.github.raw+json" } `
+  https://api.github.com/repos/selwen-0102/doubao-sp-skill/contents/install.ps1 | iex
 ```
 
 安装位置默认为 `~/.codex/skills/doubao-seedance`；设置了 `CODEX_HOME` 时会安装到其 `skills` 子目录。重复执行安装命令即可更新。
