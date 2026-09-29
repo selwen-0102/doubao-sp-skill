@@ -72,3 +72,4 @@ Codex 或终端
 - 2026-09-29：移除全部可视化网页与 Pages 发布，项目收敛为纯 Codex Skill 和跨平台 CLI。
 - 2026-09-29：增加 macOS、Windows 一键安装脚本及两端终端调用说明。
 - 2026-09-29：取消 CLI 对 `/v1/videos/uploads` 的默认依赖，恢复本地媒体自动 data URL 提交。
+- 2026-09-29：补充 Codex 调用模板，明确 API URL 与 API Key 的填写位置及缺失信息询问规则。

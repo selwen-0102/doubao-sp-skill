@@ -17,6 +17,20 @@ description: "通过用户提供的视频 API 调用豆包 Seedance 模型，自
 4. 调用当前 Skill 目录中的 `scripts/run.mjs`。使用绝对路径，避免依赖当前工作目录下存在 `skills/`。
 5. 报告任务状态、视频 URL 和实际下载路径；失败时返回 API 错误，不静默重复创建收费任务。
 
+用户可以直接按以下格式提供连接信息与生成要求：
+
+```text
+$doubao-seedance
+API URL：https://你的-api-地址/v1
+API Key：sk-你的令牌
+模型：doubao-seedance-2-5-260628
+提示词：保持主体一致，镜头缓慢推进
+参考图片：/path/to/reference.png
+完成后下载视频。
+```
+
+若 API URL 或 API Key 缺失，只询问缺少的项目，不要求用户重复已经提供的内容。
+
 ## 支持模型
 
 - `doubao-seedance-2-5-260628`

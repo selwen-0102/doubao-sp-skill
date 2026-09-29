@@ -35,13 +35,21 @@ irm -Headers @{ Accept = "application/vnd.github.raw+json" } `
 
 ## Codex 调用
 
-在 Codex 中输入：
+最简单的方式是在 Codex 中把 API URL、API Key 和生成要求一起输入：
 
 ```text
-$doubao-seedance 使用 doubao-seedance-2-5-260628 生成一段视频，参考图片是 /path/to/reference.png，完成后下载视频。
+$doubao-seedance
+API URL：https://你的-api-地址/v1
+API Key：sk-你的令牌
+模型：doubao-seedance-2-5-260628
+提示词：一只纸飞机穿过明亮房间，镜头稳定
+参考图片：/path/to/reference.png
+完成后下载视频。
 ```
 
-首次使用时提供 API URL 与 API Key。Skill 会自动处理本地图片和视频，不需要用户手动转换 Base64。
+Skill 会使用这次提供的连接信息调用 API，并自动处理本地图片和视频，不需要用户手动转换 Base64。没有提供 API URL 或 API Key 时，Codex 会先询问再执行。
+
+不希望在对话中填写 API Key 时，可以先通过下方 macOS 或 Windows 环境变量进行配置，再在 Codex 中只描述模型、提示词和参考素材。
 
 ## macOS 终端调用
 

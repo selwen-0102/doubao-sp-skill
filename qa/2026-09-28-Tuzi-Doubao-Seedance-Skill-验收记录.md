@@ -11,6 +11,7 @@
 - 任务创建、终态轮询、视频 URL 提取和流式下载；
 - API URL 根地址、`/v1` 与完整 `/v1/videos` 形式兼容；
 - API Key 不写入日志、Skill 文件或结果 JSON。
+- README 与 Skill 的 Codex 示例明确展示 API URL、API Key 的填写位置。
 
 ## 验收命令
 
@@ -40,5 +41,6 @@ git diff --check
 | Windows PowerShell 脚本 | 结构审查通过；待 Windows PowerShell 实机最终确认 |
 | 网页及 Pages 文件清理 | 通过：网页、HTTP 服务和 Pages 工作流均已删除 |
 | Git 差异完整性 | 通过：`git diff --check` 无错误 |
+| Codex 连接信息示例 | 通过：API URL 与 API Key 均有独立占位行，缺失时要求 Codex 询问 |
 
 Windows 实机最终调用需要在 Windows PowerShell、Git 与 Node.js 18+ 环境中执行。尝试使用微软 PowerShell x64 容器解析时，容器在 ARM 主机模拟层崩溃，因此没有将该次运行误记为通过；当前结论仅覆盖结构审查。
