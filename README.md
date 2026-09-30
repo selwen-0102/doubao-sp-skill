@@ -15,7 +15,7 @@
 
 ## 安装
 
-需要 Node.js 18 或更高版本以及 Git。安装后请重新启动 Codex。
+需要 Node.js 18 或更高版本。安装器优先通过 GitHub API 下载压缩包，网络异常时自动重试并回退到 Git；安装后请重新启动 Codex。
 
 macOS 终端：
 

@@ -35,7 +35,8 @@ git diff --check
 | Node.js 语法与 `--help` | 通过 |
 | macOS 安装脚本语法 | 通过：`bash -n install.sh` |
 | macOS 仓库内实际安装 | 通过：安装到临时 `CODEX_HOME` 并成功运行 `--help` |
-| macOS 浅克隆实际安装 | 通过：从标准输入运行安装器，浅克隆后安装成功 |
+| macOS 标准输入远程安装 | 通过：从标准输入运行安装器，GitHub API 压缩包下载后安装成功 |
+| GitHub 网络超时策略 | 通过：API 压缩包下载带重试，失败后回退 Git，并设置连接超时；Windows 同步使用 ZIP 下载路径 |
 | 模拟 API 完整调用 | 通过：本地 PNG/MP4 转 data URL、创建、轮询和下载均成功 |
 | API URL 形式兼容 | 通过：完整 `/v1/videos` 地址被正确规范化 |
 | 视频流式下载 | 通过：结果文件内容和字节数与模拟服务一致 |

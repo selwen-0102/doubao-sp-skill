@@ -13,7 +13,7 @@
 3. 本地图片和 MP4、MOV、WebM 视频由 CLI 自动转为 data URL，用户不需要手工转换。
 4. 不依赖尚未普遍提供的 `/v1/videos/uploads`；需要公网 URL 时保留 `--upload-command` 扩展点。
 5. 结果默认返回视频 URL；`--download` 使用流式写入和临时文件原子替换，避免整段视频常驻内存。
-6. 新增 `install.sh` 与 `install.ps1`，分别覆盖 macOS 和 Windows PowerShell 的一键安装与更新。
+6. 新增 `install.sh` 与 `install.ps1`，分别覆盖 macOS 和 Windows PowerShell 的一键安装与更新；远程安装优先下载 GitHub API 压缩包，失败时回退 Git。
 7. 安装脚本只复制 Skill 目录到 `${CODEX_HOME:-~/.codex}/skills/doubao-seedance`，不保存 API Key。
 8. `--configure` 将 URL 与 Key 保存到当前用户的 Codex 配置目录；交互式 Key 输入不回显，macOS/Linux 文件权限固定为 `600`。
 9. 连接信息按命令行参数、环境变量、全局配置的顺序覆盖；`--config-path` 只输出路径，`--clear-config` 可移除本机配置。

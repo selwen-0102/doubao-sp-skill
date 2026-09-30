@@ -17,13 +17,52 @@ New-Item -ItemType Directory -Path $TempDir -Force | Out-Null
 try {
     $Source = if ($PSScriptRoot) { Join-Path $PSScriptRoot "skills\doubao-seedance" } else { "" }
     if (-not $Source -or -not (Test-Path (Join-Path $Source "SKILL.md"))) {
-        if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
-            throw "Git is required when install.ps1 is executed without a local repository."
+        function Get-RemoteSkill {
+            $ArchivePath = Join-Path $TempDir "repository.zip"
+            $Headers = @{
+                Accept = "application/vnd.github+json"
+                "User-Agent" = "doubao-seedance-installer"
+            }
+            $Downloaded = $false
+            for ($Attempt = 1; $Attempt -le 3 -and -not $Downloaded; $Attempt++) {
+                try {
+                    Invoke-WebRequest `
+                        -UseBasicParsing `
+                        -Headers $Headers `
+                        -Uri "https://api.github.com/repos/$Repository/zipball/main" `
+                        -OutFile $ArchivePath `
+                        -TimeoutSec 120
+                    $Downloaded = $true
+                } catch {
+                    if ($Attempt -lt 3) { Start-Sleep -Seconds 2 }
+                }
+            }
+            if ($Downloaded) {
+                try {
+                    Expand-Archive -Path $ArchivePath -DestinationPath $TempDir -Force
+                    $SkillFile = Get-ChildItem -Path $TempDir -Filter "SKILL.md" -Recurse |
+                        Where-Object { $_.FullName -match "[\\/]skills[\\/]doubao-seedance[\\/]SKILL\.md$" } |
+                        Select-Object -First 1
+                    if ($SkillFile) { return $SkillFile.Directory.FullName }
+                } catch {
+                    # Fall back to Git below when the archive cannot be extracted.
+                }
+            }
+
+            if (Get-Command git -ErrorAction SilentlyContinue) {
+                $RepositoryPath = Join-Path $TempDir "repository"
+                & git -c http.version=HTTP/1.1 `
+                    -c http.connectTimeout=15 `
+                    -c http.lowSpeedLimit=1000 `
+                    -c http.lowSpeedTime=30 `
+                    clone --depth 1 --quiet "https://github.com/$Repository.git" $RepositoryPath
+                if ($LASTEXITCODE -eq 0) {
+                    return (Join-Path $RepositoryPath "skills\doubao-seedance")
+                }
+            }
+            throw "Unable to download $Repository. Check your network or proxy and retry."
         }
-        $RepositoryPath = Join-Path $TempDir "repository"
-        & git clone --depth 1 --quiet "https://github.com/$Repository.git" $RepositoryPath
-        if ($LASTEXITCODE -ne 0) { throw "Failed to download $Repository." }
-        $Source = Join-Path $RepositoryPath "skills\doubao-seedance"
+        $Source = Get-RemoteSkill
     }
     if (-not (Test-Path (Join-Path $Source "SKILL.md")) -or
         -not (Test-Path (Join-Path $Source "scripts\run.mjs"))) {
