@@ -15,6 +15,8 @@
 5. 结果默认返回视频 URL；`--download` 使用流式写入和临时文件原子替换，避免整段视频常驻内存。
 6. 新增 `install.sh` 与 `install.ps1`，分别覆盖 macOS 和 Windows PowerShell 的一键安装与更新。
 7. 安装脚本只复制 Skill 目录到 `${CODEX_HOME:-~/.codex}/skills/doubao-seedance`，不保存 API Key。
+8. `--configure` 将 URL 与 Key 保存到当前用户的 Codex 配置目录；交互式 Key 输入不回显，macOS/Linux 文件权限固定为 `600`。
+9. 连接信息按命令行参数、环境变量、全局配置的顺序覆盖；`--config-path` 只输出路径，`--clear-config` 可移除本机配置。
 
 ## 复现路径
 
@@ -65,7 +67,7 @@ Codex 或终端
 - `--base64` 结果默认限制为 128 MiB；普通下载保持流式处理。
 - 参考图片最多 9 条、参考视频最多 3 条。
 - 轮询间隔不能低于 3 秒，失败后不自动重建可能产生费用的任务。
-- API Key 仅从参数或环境变量读取，不写入仓库与结果 JSON。
+- API Key 从参数、环境变量或本机全局配置读取，不写入日志、聊天、仓库与结果 JSON；全局配置含明文 Key，不得上传、同步或分享。
 
 ## 变更记录
 
@@ -73,3 +75,4 @@ Codex 或终端
 - 2026-09-29：增加 macOS、Windows 一键安装脚本及两端终端调用说明。
 - 2026-09-29：取消 CLI 对 `/v1/videos/uploads` 的默认依赖，恢复本地媒体自动 data URL 提交。
 - 2026-09-29：补充 Codex 调用模板，明确 API URL 与 API Key 的填写位置及缺失信息询问规则。
+- 2026-09-30：增加全局连接配置，URL 与 Key 只需本机配置一次，避免每次会话发送密钥。

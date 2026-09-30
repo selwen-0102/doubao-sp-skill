@@ -9,13 +9,25 @@ description: "通过用户提供的视频 API 调用豆包 Seedance 模型，自
 
 ## 执行流程
 
-1. 从用户输入或环境变量读取 API URL 与 API Key：
+1. 按命令行参数、环境变量、全局配置的顺序读取 API URL 与 API Key。环境变量名称：
    - `DOUBAO_SEEDANCE_URL`
    - `DOUBAO_SEEDANCE_KEY`
 2. 若缺少其中一项，再向用户询问；不要输出、记录或写入真实 API Key。
 3. 根据用户要求选择模型、提示词、参考媒体和输出选项。
 4. 调用当前 Skill 目录中的 `scripts/run.mjs`。使用绝对路径，避免依赖当前工作目录下存在 `skills/`。
 5. 报告任务状态、视频 URL 和实际下载路径；失败时返回 API 错误，不静默重复创建收费任务。
+
+### 全局连接配置
+
+优先使用本机全局配置，避免让用户在每个会话中发送 API Key：
+
+```bash
+node /absolute/path/to/doubao-seedance/scripts/run.mjs --configure
+```
+
+该命令交互式询问 API URL 和 API Key，Key 输入不回显，默认保存到 `${CODEX_HOME:-~/.codex}/config/doubao-seedance.json`。配置文件包含明文 Key，只在本机读取，不把 Key 写入聊天、日志或结果 JSON；不要上传、同步或分享该文件。需要查看位置时使用 `--config-path`，需要删除时使用 `--clear-config`。
+
+连接信息优先级为：命令行 `--url`/`--key` > 环境变量 `DOUBAO_SEEDANCE_URL`/`DOUBAO_SEEDANCE_KEY` > 全局配置文件。全局配置不存在时，再询问用户缺少的 URL 或 Key。
 
 用户可以直接按以下格式提供连接信息与生成要求：
 

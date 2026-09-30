@@ -12,6 +12,7 @@
 - API URL 根地址、`/v1` 与完整 `/v1/videos` 形式兼容；
 - API Key 不写入日志、Skill 文件或结果 JSON。
 - README 与 Skill 的 Codex 示例明确展示 API URL、API Key 的填写位置。
+- 全局 API URL/Key 一次配置、后续会话不再粘贴 Key。
 
 ## 验收命令
 
@@ -42,5 +43,10 @@ git diff --check
 | 网页及 Pages 文件清理 | 通过：网页、HTTP 服务和 Pages 工作流均已删除 |
 | Git 差异完整性 | 通过：`git diff --check` 无错误 |
 | Codex 连接信息示例 | 通过：API URL 与 API Key 均有独立占位行，缺失时要求 Codex 询问 |
+| 全局配置生命周期 | 通过：`--configure`、`--config-path`、`--clear-config` 均已验证 |
+| API Key 输入隐藏 | 通过：交互终端只显示星号，不回显 Key |
+| macOS/Linux 配置权限 | 通过：配置文件权限为 `600` |
+| 连接信息优先级 | 通过：命令行 > 环境变量 > 全局配置 |
+| 显式连接信息隔离 | 通过：URL 与 Key 均由参数或环境变量提供时，不读取无关的全局配置文件 |
 
 Windows 实机最终调用需要在 Windows PowerShell、Git 与 Node.js 18+ 环境中执行。尝试使用微软 PowerShell x64 容器解析时，容器在 ARM 主机模拟层崩溃，因此没有将该次运行误记为通过；当前结论仅覆盖结构审查。

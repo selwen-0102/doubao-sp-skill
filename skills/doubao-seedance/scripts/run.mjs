@@ -1,12 +1,14 @@
 #!/usr/bin/env node
 
 import { createWriteStream } from "node:fs";
-import { mkdir, readFile, rename, rm, stat } from "node:fs/promises";
+import { chmod, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
+import { createInterface } from "node:readline/promises";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
-import { basename, extname, join, resolve } from "node:path";
+import { basename, dirname, extname, join, resolve } from "node:path";
 
 const MODELS = new Set([
   "doubao-seedance-2-5-260628",
@@ -48,8 +50,11 @@ function printHelp() {
   node skills/doubao-seedance/scripts/run.mjs --model <model> --prompt <text> [options]
 
 Connection:
-  --url <url>                 API base URL; default DOUBAO_SEEDANCE_URL
-  --key <key>                 API key; default DOUBAO_SEEDANCE_KEY
+  --url <url>                 API base URL; default env/global config
+  --key <key>                 API key; default env/global config
+  --configure                 Save API URL and Key to the global local config
+  --config-path               Print the global config path without its contents
+  --clear-config              Delete the global local config
 
 Request:
   --model <model>             One of the four supported Seedance models
@@ -106,6 +111,15 @@ function parseArgs(argv) {
         break;
       case "--key":
         args.key = next();
+        break;
+      case "--configure":
+        args.configure = true;
+        break;
+      case "--config-path":
+        args.configPath = true;
+        break;
+      case "--clear-config":
+        args.clearConfig = true;
         break;
       case "--model":
         args.model = next();
@@ -218,13 +232,139 @@ function normalizeBaseUrl(value) {
   return parsed.toString().replace(/\/$/, "");
 }
 
-function resolveConnection(args) {
-  const url = normalizeBaseUrl(args.url || process.env.DOUBAO_SEEDANCE_URL);
-  const key = args.key || process.env.DOUBAO_SEEDANCE_KEY;
-  if (!key) {
-    throw new Error("Missing API key. Provide --key or DOUBAO_SEEDANCE_KEY.");
+function globalConfigPath() {
+  if (process.env.DOUBAO_SEEDANCE_CONFIG) return resolve(process.env.DOUBAO_SEEDANCE_CONFIG);
+  const codexRoot = process.env.CODEX_HOME || join(homedir(), ".codex");
+  return join(codexRoot, "config", "doubao-seedance.json");
+}
+
+async function loadGlobalConfig() {
+  const path = globalConfigPath();
+  try {
+    const raw = await readFile(path, "utf8");
+    const config = JSON.parse(raw);
+    if (!config || typeof config !== "object" || Array.isArray(config)) throw new Error("config must be an object");
+    return {
+      url: typeof config.url === "string" ? config.url.trim() : "",
+      key: typeof config.key === "string" ? config.key.trim() : "",
+    };
+  } catch (error) {
+    if (error.code === "ENOENT") return {};
+    throw new Error(`Global config is invalid at ${path}. Run --configure to replace it.`);
   }
-  return { url, key };
+}
+
+async function saveGlobalConfig({ url, key }) {
+  const path = globalConfigPath();
+  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+  await writeFile(path, `${JSON.stringify({ url, key })}\n`, { mode: 0o600 });
+  if (process.platform !== "win32") await chmod(path, 0o600);
+  return path;
+}
+
+async function promptSecret(question) {
+  if (!process.stdin.isTTY || typeof process.stdin.setRawMode !== "function") {
+    const readline = createInterface({ input: process.stdin, output: process.stdout });
+    try {
+      return (await readline.question(question)).trim();
+    } finally {
+      readline.close();
+    }
+  }
+
+  return new Promise((resolvePromise, reject) => {
+    let value = "";
+    const stdin = process.stdin;
+    const stdout = process.stdout;
+    const restore = () => {
+      stdin.setRawMode(false);
+      stdin.pause();
+      stdin.removeListener("data", onData);
+    };
+    const finish = (result, error) => {
+      restore();
+      stdout.write("\n");
+      if (error) reject(error);
+      else resolvePromise(result.trim());
+    };
+    const onData = (chunk) => {
+      for (const char of String(chunk)) {
+        if (char === "\u0003") return finish("", new Error("Configuration cancelled"));
+        if (char === "\r" || char === "\n") return finish(value);
+        if (char === "\u0008" || char === "\u007f") {
+          if (value) {
+            value = value.slice(0, -1);
+            stdout.write("\b \b");
+          }
+          continue;
+        }
+        value += char;
+        stdout.write("*");
+      }
+    };
+    stdout.write(question);
+    stdin.setRawMode(true);
+    stdin.resume();
+    stdin.on("data", onData);
+  });
+}
+
+async function configureGlobalConfig(args) {
+  let current = {};
+  try {
+    current = await loadGlobalConfig();
+  } catch (error) {
+    if (!error.message.startsWith("Global config is invalid")) throw error;
+  }
+  let url = args.url;
+  let enteredKey = args.key;
+  if (!process.stdin.isTTY || typeof process.stdin.setRawMode !== "function") {
+    if (!url) process.stdout.write(`API URL [${current.url || "未设置"}]: `);
+    if (!enteredKey) process.stdout.write("API Key（留空保留现有 Key）: ");
+    let input = "";
+    for await (const chunk of process.stdin) input += chunk;
+    const lines = input.split(/\r?\n/);
+    let index = 0;
+    if (!url) url = (lines[index++] || "").trim() || current.url;
+    if (!enteredKey) enteredKey = (lines[index] || "").trim();
+  } else {
+    if (!url) {
+      const readline = createInterface({ input: process.stdin, output: process.stdout });
+      try {
+        url = (await readline.question(`API URL [${current.url || "未设置"}]: `)).trim() || current.url;
+      } finally {
+        readline.close();
+      }
+    }
+    if (!enteredKey) enteredKey = await promptSecret("API Key（输入不回显，留空保留现有 Key）: ");
+  }
+  const key = enteredKey || current.key;
+  if (!url || !key) throw new Error("API URL and API Key are required for configuration");
+  normalizeBaseUrl(url);
+  const path = await saveGlobalConfig({ url, key });
+  process.stdout.write(`Global config saved to ${path}\n`);
+}
+
+async function clearGlobalConfig() {
+  const path = globalConfigPath();
+  await rm(path, { force: true });
+  process.stdout.write(`Global config removed from ${path}\n`);
+}
+
+async function resolveConnection(args) {
+  const explicitUrl = args.url || process.env.DOUBAO_SEEDANCE_URL;
+  const explicitKey = args.key || process.env.DOUBAO_SEEDANCE_KEY;
+  const config = explicitUrl && explicitKey ? {} : await loadGlobalConfig();
+  const rawUrl = explicitUrl || config.url;
+  if (!rawUrl) {
+    throw new Error("Missing API URL. Provide --url, DOUBAO_SEEDANCE_URL, or run --configure.");
+  }
+  const resolvedUrl = normalizeBaseUrl(rawUrl);
+  const key = explicitKey || config.key;
+  if (!key) {
+    throw new Error("Missing API key. Provide --key, DOUBAO_SEEDANCE_KEY, or run --configure.");
+  }
+  return { url: resolvedUrl, key };
 }
 
 function authHeader(key) {
@@ -545,11 +685,23 @@ async function main() {
     printHelp();
     return;
   }
+  if (args.configPath) {
+    process.stdout.write(`${globalConfigPath()}\n`);
+    return;
+  }
+  if (args.clearConfig) {
+    await clearGlobalConfig();
+    return;
+  }
+  if (args.configure) {
+    await configureGlobalConfig(args);
+    return;
+  }
   assertSupportedModel(args.model);
   if (args.pollIntervalSeconds < MIN_POLL_INTERVAL_SECONDS) {
     throw new Error(`--poll-interval must be at least ${MIN_POLL_INTERVAL_SECONDS} seconds`);
   }
-  const { url: baseUrl, key } = resolveConnection(args);
+  const { url: baseUrl, key } = await resolveConnection(args);
   if (args.preflight) {
     await requestJson(`${baseUrl}/v1/models`, { key });
   }
