@@ -52,7 +52,7 @@ $SkillRoot = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $HOME ".c
 node (Join-Path $SkillRoot "skills\doubao-seedance\scripts\run.mjs") --configure
 ```
 
-按提示输入一次：
+按提示依次输入一次，先输入 API URL，再输入 API Key：
 
 ```text
 API URL：https://你的-api-地址/v1

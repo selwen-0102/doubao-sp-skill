@@ -25,7 +25,7 @@ description: "通过用户提供的视频 API 调用豆包 Seedance 模型，自
 node /absolute/path/to/doubao-seedance/scripts/run.mjs --configure
 ```
 
-该命令交互式询问 API URL 和 API Key，Key 输入不回显，默认保存到 `${CODEX_HOME:-~/.codex}/config/doubao-seedance.json`。配置文件包含明文 Key，只在本机读取，不把 Key 写入聊天、日志或结果 JSON；不要上传、同步或分享该文件。需要查看位置时使用 `--config-path`，需要删除时使用 `--clear-config`。
+该命令依次询问 API URL 和 API Key，先输入完整的 `http(s)` URL，再输入 Key；Key 输入不回显。默认保存到 `${CODEX_HOME:-~/.codex}/config/doubao-seedance.json`。配置文件包含明文 Key，只在本机读取，不把 Key 写入聊天、日志或结果 JSON；不要上传、同步或分享该文件。需要查看位置时使用 `--config-path`，需要删除时使用 `--clear-config`。
 
 连接信息优先级为：命令行 `--url`/`--key` > 环境变量 `DOUBAO_SEEDANCE_URL`/`DOUBAO_SEEDANCE_KEY` > 全局配置文件。全局配置不存在时，再询问用户缺少的 URL 或 Key。
 

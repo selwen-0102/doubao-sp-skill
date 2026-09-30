@@ -45,6 +45,7 @@ git diff --check
 | Codex 连接信息示例 | 通过：API URL 与 API Key 均有独立占位行，缺失时要求 Codex 询问 |
 | 全局配置生命周期 | 通过：`--configure`、`--config-path`、`--clear-config` 均已验证 |
 | API Key 输入隐藏 | 通过：交互终端只显示星号，不回显 Key |
+| 配置输入顺序与错误脱敏 | 通过：先校验 URL 再读取 Key，URL 错误不回显用户输入内容 |
 | macOS/Linux 配置权限 | 通过：配置文件权限为 `600` |
 | 连接信息优先级 | 通过：命令行 > 环境变量 > 全局配置 |
 | 显式连接信息隔离 | 通过：URL 与 Key 均由参数或环境变量提供时，不读取无关的全局配置文件 |

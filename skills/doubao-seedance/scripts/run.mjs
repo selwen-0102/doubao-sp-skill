@@ -216,7 +216,7 @@ function normalizeBaseUrl(value) {
   try {
     parsed = new URL(value);
   } catch {
-    throw new Error(`Invalid API URL: ${value}`);
+    throw new Error("Invalid API URL. Enter a full http(s) URL, for example https://api.example.com/v1.");
   }
   if (!/^https?:$/.test(parsed.protocol)) {
     throw new Error("API URL must use http or https");
@@ -319,7 +319,7 @@ async function configureGlobalConfig(args) {
   let url = args.url;
   let enteredKey = args.key;
   if (!process.stdin.isTTY || typeof process.stdin.setRawMode !== "function") {
-    if (!url) process.stdout.write(`API URL [${current.url || "未设置"}]: `);
+    if (!url) process.stdout.write(`API URL（先输入，例如 https://api.example.com/v1）[${current.url || "未设置"}]: `);
     if (!enteredKey) process.stdout.write("API Key（留空保留现有 Key）: ");
     let input = "";
     for await (const chunk of process.stdin) input += chunk;
@@ -331,16 +331,17 @@ async function configureGlobalConfig(args) {
     if (!url) {
       const readline = createInterface({ input: process.stdin, output: process.stdout });
       try {
-        url = (await readline.question(`API URL [${current.url || "未设置"}]: `)).trim() || current.url;
+        url = (await readline.question(`API URL（先输入，例如 https://api.example.com/v1）[${current.url || "未设置"}]: `)).trim() || current.url;
       } finally {
         readline.close();
       }
     }
-    if (!enteredKey) enteredKey = await promptSecret("API Key（输入不回显，留空保留现有 Key）: ");
   }
+  // Validate the URL before collecting the secret so a misplaced key is never echoed in an error.
+  normalizeBaseUrl(url);
+  if (!enteredKey) enteredKey = await promptSecret("API Key（输入不回显，留空保留现有 Key）: ");
   const key = enteredKey || current.key;
   if (!url || !key) throw new Error("API URL and API Key are required for configuration");
-  normalizeBaseUrl(url);
   const path = await saveGlobalConfig({ url, key });
   process.stdout.write(`Global config saved to ${path}\n`);
 }
